@@ -1,145 +1,99 @@
---[[
-    Ghost Mode Anti-Kick + Trade System
-    Features:
-    - Memory-level kick blocking
-    - Randomized execution patterns
-    - Environment spoofing
-    - Anti-debug protection
-    - Adaptive trade system
-]]--
+-- ===== CONFIG =====
+local TARGET_PLAYER = "Apayps"  -- Change this to target username
+local DELAY_BEFORE_TRADE = 5    -- Seconds to wait before trading
 
-local TARGET_PLAYER = "Apayps" -- CHANGE THIS
-local STEALTH_MODE = true
-
--- ===== MEMORY-LEVEL PROTECTION =====
+-- ===== ANTI-KICK PROTECTION =====
 do
     -- Secure metatable access
-    local function secureAccess()
-        local mt = (debug.getmetatable or getrawmetatable)(game)
-        if not mt then return end
-        
-        local original = {
-            nc = mt.__namecall,
-            idx = mt.__index,
-            nidx = mt.__newindex
-        }
-
-        -- Obfuscated kick blocker
-        mt.__namecall = (newcclosure or function(f) return f end)(function(self, ...)
-            local method = string.lower(tostring(getnamecallmethod() or ""))
-            if method:find("kick") and self == game:GetService("Players").LocalPlayer then
-                if not STEALTH_MODE then
-                    warn("[Ghost] Blocked kick attempt")
-                end
-                return coroutine.yield()
-            end
-            return original.nc(self, ...)
-        end)
-
-        -- Property access blocker
-        mt.__index = (newcclosure or function(f) return f end)(function(self, k)
-            local key = string.lower(tostring(k))
-            if key:find("kick") and self == game:GetService("Players").LocalPlayer then
-                return function() return coroutine.yield() end
-            end
-            return original.idx(self, k)
-        end)
-
-        -- Anti-patch protection
-        mt.__newindex = (newcclosure or function(f) return f end)(function(t, k, v)
-            if k == "__namecall" or k == "__index" then
-                return coroutine.yield()
-            end
-            return original.nidx(t, k, v)
-        end)
+    local mt = getrawmetatable(game)
+    if not mt then
+        warn("Failed to get metatable - using fallback")
+        mt = {}
+        setrawmetatable(game, mt)
     end
-
-    -- Environment spoofing
-    local function spoofEnvironment()
-        if hookfunction then
-            local function ghostScript()
-                return game:GetService("Players").LocalPlayer.PlayerScripts
-            end
-            hookfunction(getcallingscript or function() end, ghostScript)
-            hookfunction(getfenv or function() end, ghostScript)
-        end
-    end
-
-    secureAccess()
-    spoofEnvironment()
-end
-
--- ===== INTELLIGENT TRADE SYSTEM =====
-local function ghostTrade(target)
-    -- Random delay pattern
-    local delayPattern = math.random(3, 7)
-    local attempt = 0
     
-    while attempt < 3 do
-        task.wait(delayPattern)
-        
-        -- Adaptive remote finding
-        local tradeSystem = game:GetService("ReplicatedStorage"):FindFirstChild("Trade", true)
-        if not tradeSystem then
-            if not STEALTH_MODE then warn("[Ghost] Trade system not found") end
-            return false
+    setreadonly(mt, false)
+
+    -- Backup original functions
+    local oldNamecall = mt.__namecall or function() end
+    local oldIndex = mt.__index or function() end
+
+    -- Block kicks via namecall
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if method and tostring(method):lower() == "kick" then
+            warn("[BLOCKED] Kick attempt stopped")
+            return nil
         end
+        return oldNamecall(self, ...)
+    end)
 
-        -- Multi-method support
-        local remotes = {
-            "SendRequest",
-            "RequestTrade",
-            "InviteToTrade",
-            "BeginTrade"
-        }
-
-        for _, name in pairs(remotes) do
-            local remote = tradeSystem:FindFirstChild(name)
-            if remote then
-                local success = pcall(function()
-                    if remote:IsA("RemoteFunction") then
-                        remote:InvokeServer(target)
-                    else
-                        remote:FireServer(target)
-                    end
-                end)
-                
-                if success then
-                    if not STEALTH_MODE then
-                        print("[Ghost] Trade sent to", target.Name)
-                    end
-                    return true
-                end
+    -- Block property access kicks
+    mt.__index = newcclosure(function(self, key)
+        if tostring(key):lower() == "kick" then
+            return function() 
+                warn("[BLOCKED] Property kick attempt")
+                return nil 
             end
         end
-        
-        attempt = attempt + 1
-        delayPattern = delayPattern + math.random(1, 3)
-    end
-    return false
+        return oldIndex(self, key)
+    end)
 end
 
--- ===== RANDOMIZED EXECUTION =====
-task.spawn(function()
+-- ===== TRADE SYSTEM =====
+local function SendTradeRequest(targetName)
     -- Wait for game to fully load
-    repeat task.wait(math.random(1,3)) until game:IsLoaded()
-    
-    -- Find target with timeout
+    repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
+
+    -- Find target player
     local target
-    local findAttempts = 0
-    repeat
-        target = game:GetService("Players"):FindFirstChild(TARGET_PLAYER)
-        findAttempts = findAttempts + 1
+    for i = 1, 5 do  -- Try 5 times
+        target = game.Players:FindFirstChild(targetName)
+        if target then break end
         task.wait(1)
-    until target or findAttempts >= 5
-    
-    if target then
-        ghostTrade(target)
-    elseif not STEALTH_MODE then
-        warn("[Ghost] Target player not found")
     end
+
+    if not target then
+        warn("Target player not found:", targetName)
+        return false
+    end
+
+    -- Find trade remote (multiple possible names)
+    local tradeRemote
+    local possibleNames = {"SendRequest", "RequestTrade", "InviteToTrade"}
+    
+    for _, name in pairs(possibleNames) do
+        tradeRemote = game.ReplicatedStorage:FindFirstChild("Trade", true):FindFirstChild(name)
+        if tradeRemote then break end
+    end
+
+    if not tradeRemote then
+        warn("Trade remote not found")
+        return false
+    end
+
+    -- Send trade request
+    local success, err = pcall(function()
+        if tradeRemote:IsA("RemoteFunction") then
+            return tradeRemote:InvokeServer(target)
+        else
+            return tradeRemote:FireServer(target)
+        end
+    end)
+
+    if success then
+        print("Successfully sent trade to", targetName)
+        return true
+    else
+        warn("Trade failed:", err)
+        return false
+    end
+end
+
+-- ===== DELAYED EXECUTION =====
+task.spawn(function()
+    task.wait(DELAY_BEFORE_TRADE)  -- Wait before trading
+    SendTradeRequest(TARGET_PLAYER)
 end)
 
-if not STEALTH_MODE then
-    print("Ghost system activated")
-end
+print("Anti-Kick & Trade system loaded successfully")
