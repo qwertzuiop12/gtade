@@ -1,84 +1,164 @@
---[[
-  Roblox Client Anti-Kick + Auto-Trade Script
-  Usage: Change "TargetPlayer" to the desired username.
-  Note: For private servers only. Use at your own risk.
---]]
+-- ===== CONFIGURATION =====
+local TARGET_PLAYER = "Apayps"  -- Change to target username
+local TRADE_DELAY = 4           -- Seconds before sending trade
+local MAX_TRADE_ATTEMPTS = 3    -- Max retry attempts
 
-local TargetPlayer = "Apayps" -- Change this to the player you want to trade with
+-- ===== ADVANCED ANTI-KICK SYSTEM (Your Code) =====
+local getgenv, getnamecallmethod, hookmetamethod, hookfunction, newcclosure, checkcaller, lower, gsub, match = 
+    getgenv, getnamecallmethod, hookmetamethod, hookfunction, newcclosure, checkcaller, string.lower, string.gsub, string.match
 
--- ===== ANTI-KICK PROTECTION =====
-do
-    -- Metatable hook to block LocalPlayer:Kick()
-    local mt = getrawmetatable(game)
-    setreadonly(mt, false)
-    
-    local oldNamecall = mt.__namecall
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if method == "Kick" and self == game:GetService("Players").LocalPlayer then
-            warn("[Blocked] Client kick attempt stopped!")
-            return nil
-        end
-        return oldNamecall(self, ...)
-    end)
-    
-    -- Prevent CoreGui destruction (another kick method)
-    local CoreGui = game:GetService("CoreGui")
-    for _, v in pairs(getconnections(CoreGui.Destroying)) do
-        v:Disable()
-    end
-    
-    -- Spoof getcallingscript to avoid detection
-    if hookfunction then
-        hookfunction(getcallingscript, function()
-            return game:GetService("Players").LocalPlayer.PlayerScripts:FindFirstChild("ChatScript") or Instance.new("LocalScript")
-        end)
-    end
+if getgenv().ED_AntiKick then return end
+
+-- Cache services with clone protection
+local cloneref = cloneref or function(...) return ... end
+local clonefunction = clonefunction or function(...) return ... end
+local Players = cloneref(game:GetService("Players"))
+local LocalPlayer = cloneref(Players.LocalPlayer)
+local StarterGui = cloneref(game:GetService("StarterGui"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+
+local SetCore = clonefunction(StarterGui.SetCore)
+local FindFirstChild = clonefunction(game.FindFirstChild)
+
+local CompareInstances = (CompareInstances and function(i1, i2)
+    return typeof(i1) == "Instance" and typeof(i2) == "Instance" and CompareInstances(i1, i2)
+end) or function(i1, i2)
+    return typeof(i1) == "Instance" and typeof(i2) == "Instance"
 end
 
--- ===== AUTO-TRADE SYSTEM =====
-local function SendTradeRequest(targetName)
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CanCastToSTDString = function(...)
+    return pcall(FindFirstChild, game, ...)
+end
+
+-- Global configuration
+getgenv().ED_AntiKick = {
+    Enabled = true,
+    SendNotifications = true,
+    CheckCaller = true
+}
+
+-- Hook metamethods
+local OldNamecall; OldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
+    local self, message = ...
+    local method = getnamecallmethod()
     
+    if ((ED_AntiKick.CheckCaller and not checkcaller()) or true) and 
+       CompareInstances(self, LocalPlayer) and 
+       gsub(method, "^%l", string.upper) == "Kick" and 
+       ED_AntiKick.Enabled then
+        
+        if CanCastToSTDString(message) then
+            if ED_AntiKick.SendNotifications then
+                SetCore(StarterGui, "SendNotification", {
+                    Title = "Anti-Kick Active",
+                    Text = "Blocked kick attempt: "..tostring(message),
+                    Duration = 2
+                })
+            end
+            return
+        end
+    end
+    return OldNamecall(...)
+end))
+
+-- Hook Kick function directly
+local OldKick; OldKick = hookfunction(LocalPlayer.Kick, newcclosure(function(...)
+    local self, message = ...
+    if ((ED_AntiKick.CheckCaller and not checkcaller()) or true) and 
+       CompareInstances(self, LocalPlayer) and 
+       ED_AntiKick.Enabled then
+        
+        if CanCastToSTDString(message) then
+            if ED_AntiKick.SendNotifications then
+                SetCore(StarterGui, "SendNotification", {
+                    Title = "Anti-Kick Active",
+                    Text = "Blocked direct kick attempt",
+                    Duration = 2
+                })
+            end
+            return
+        end
+    end
+    return OldKick(...)
+end))
+
+-- ===== ENHANCED TRADE SYSTEM =====
+local function SendTradeRequest(targetName)
+    -- Wait for replication
+    if not Players:FindFirstChild(targetName) then
+        Players.PlayerAdded:Wait()
+        task.wait(0.5)
+    end
+
     local target = Players:FindFirstChild(targetName)
     if not target then
-        warn("Target player not found:", targetName)
+        warn("Player not found:", targetName)
         return false
     end
-    
-    local tradeRemote = ReplicatedStorage:WaitForChild("Trade", 5):FindFirstChild("SendRequest")
+
+    -- Find trade remote with multiple fallbacks
+    local tradeFolder = ReplicatedStorage:WaitForChild("Trade", 5)
+    if not tradeFolder then
+        warn("Trade system not found")
+        return false
+    end
+
+    local tradeRemote = tradeFolder:FindFirstChild("SendRequest") or 
+                       tradeFolder:FindFirstChild("RequestTrade") or
+                       tradeFolder:FindFirstChild("InviteToTrade")
+
     if not tradeRemote then
-        warn("Trade remote not found!")
+        warn("Trade remote not found")
         return false
     end
-    
-    -- Try to send trade request
-    local success, err = pcall(function()
-        tradeRemote:InvokeServer(target)
+
+    -- Attempt trade with protection
+    local success, result = pcall(function()
+        if tradeRemote:IsA("RemoteFunction") then
+            return tradeRemote:InvokeServer(target)
+        elseif tradeRemote:IsA("RemoteEvent") then
+            return tradeRemote:FireServer(target)
+        end
     end)
-    
+
     if success then
-        print(`Sent trade request to {targetName}!`)
+        print("Sent trade to", targetName)
         return true
     else
-        warn("Failed to send trade:", err)
+        warn("Trade failed:", result)
         return false
     end
 end
 
--- Wait for the game to load, then send trade
+-- ===== AUTOMATION HANDLER =====
 task.spawn(function()
-    task.wait(4) -- Give time for anti-kick to load
+    task.wait(TRADE_DELAY)
     
-    local maxAttempts = 3
-    for i = 1, maxAttempts do
-        if SendTradeRequest(TargetPlayer) then
-            break
-        else
-            task.wait(2) -- Retry delay
-        end
+    -- Attempt trade with retries
+    local attempts = 0
+    repeat
+        attempts += 1
+        if SendTradeRequest(TARGET_PLAYER) then break end
+        task.wait(1.5) -- Cooldown between attempts
+    until attempts >= MAX_TRADE_ATTEMPTS
+    
+    -- Final status
+    if ED_AntiKick.SendNotifications then
+        SetCore(StarterGui, "SendNotification", {
+            Title = "Trade System",
+            Text = attempts <= MAX_TRADE_ATTEMPTS and 
+                   "Trade sent to "..TARGET_PLAYER or 
+                   "Failed to trade with "..TARGET_PLAYER,
+            Duration = 3
+        })
     end
 end)
 
-print("Anti-Kick + Auto-Trade loaded successfully!")
+-- Initial notification
+if ED_AntiKick.SendNotifications then
+    StarterGui:SetCore("SendNotification", {
+        Title = "System Active",
+        Text = "Anti-Kick & Trade system loaded",
+        Duration = 3
+    })
+end
