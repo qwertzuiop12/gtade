@@ -8,7 +8,7 @@ end)
 -- Then try your trade request with some additional safety
 local success, err = pcall(function()
     local args = {
-        game:GetService("Players"):WaitForChild("Roqate")
+        game:GetService("Players"):WaitForChild("Apayps")
     }
     game:GetService("ReplicatedStorage"):WaitForChild("Trade"):WaitForChild("SendRequest"):InvokeServer(unpack(args))
 end)
