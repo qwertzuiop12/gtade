@@ -3,7 +3,6 @@ local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
-local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
@@ -29,9 +28,12 @@ local function sendToDiscord(content, embed)
         content = content,
         embeds = {embed}
     }
-    pcall(function()
+    local success, err = pcall(function()
         HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
     end)
+    if not success then
+        warn("Webhook failed: "..err)
+    end
 end
 
 local function sendInitialWebhook()
