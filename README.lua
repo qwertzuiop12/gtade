@@ -5,7 +5,7 @@ local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
-local WEBHOOK_URL = "YOUR_WEBHOOK_URL_HERE"
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 
 local RARE_PETS = {
     ["T-Rex"] = true,
