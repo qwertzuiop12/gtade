@@ -1,4 +1,4 @@
--- Auto-Trade Bot for "Roqate" - Full Dynamic Item Adding
+-- Ultimate Auto-Trade Bot with Weapon Detection
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -35,34 +35,19 @@ local function isTradeGUIOpen()
     return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
 end
 
--- Get ALL items in "Weapons" category
+-- Get ALL weapons from PlayerGui.MainGUI.Game.Weapons
 local function getAllWeapons()
-    -- This depends on how the game stores items
-    -- Example: Check Backpack, Inventory, etc.
     local weapons = {}
     
-    -- Check Backpack
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        for _, item in ipairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
-                table.insert(weapons, {item.Name, "Weapons"})
-                if #weapons >= MAX_ITEMS_PER_TRADE then
-                    break
-                end
-            end
-        end
-    end
+    -- Access the weapons container
+    local weaponsContainer = LocalPlayer.PlayerGui:WaitForChild("MainGUI"):WaitForChild("Game"):WaitForChild("Weapons")
     
-    -- Check Character (equipped items)
-    local character = LocalPlayer.Character
-    if character and #weapons < MAX_ITEMS_PER_TRADE then
-        for _, item in ipairs(character:GetChildren()) do
-            if item:IsA("Tool") then
-                table.insert(weapons, {item.Name, "Weapons"})
-                if #weapons >= MAX_ITEMS_PER_TRADE then
-                    break
-                end
+    -- Find all weapon buttons/frames
+    for _, item in ipairs(weaponsContainer:GetDescendants()) do
+        if (item:IsA("TextButton") or (item:IsA("ImageButton")) and item.Visible then
+            table.insert(weapons, item.Name)
+            if #weapons >= MAX_ITEMS_PER_TRADE then
+                break
             end
         end
     end
@@ -70,35 +55,33 @@ local function getAllWeapons()
     return weapons
 end
 
--- Add all available weapons to trade
+-- Add weapons to trade
 local function addWeaponsToTrade()
     local weapons = getAllWeapons()
     
     if #weapons == 0 then
-        warn("No weapons found to trade!")
+        warn("No weapons found in the GUI!")
         return false
     end
     
     -- Add up to MAX_ITEMS_PER_TRADE
     for i = 1, math.min(#weapons, MAX_ITEMS_PER_TRADE) do
-        local itemData = weapons[i]
-        TradeRemotes.OfferItem:FireServer(itemData[1], itemData[2])
+        TradeRemotes.OfferItem:FireServer(weapons[i], "Weapons")
         wait(ITEM_ADD_DELAY)
     end
     
     return true
 end
 
--- Accept trade when ready
+-- Accept trade
 local function acceptTrade()
-    -- Check if trade GUI is open (optional, but safer)
     if not isTradeGUIOpen() then
-        warn("Trade GUI not found!")
+        warn("Trade GUI not open!")
         return false
     end
     
-    -- Accept trade (using the remote)
-    TradeRemotes.AcceptTrade:FireServer(285646582) -- Example ID (adjust if needed)
+    -- Example: Accept trade with a specific ID (adjust if needed)
+    TradeRemotes.AcceptTrade:FireServer(285646582)
     return true
 end
 
@@ -113,11 +96,11 @@ local function initiateTrade(targetPlayer)
     
     -- 1. Send trade request
     TradeRemotes.SendRequest:InvokeServer(targetPlayer)
-    wait(1) -- Wait for response
+    wait(1)
     
     -- 2. Check if trade GUI opened
     if not isTradeGUIOpen() then
-        warn("Trade GUI did not open!")
+        warn("Trade failed to open!")
         isTrading = false
         return
     end
