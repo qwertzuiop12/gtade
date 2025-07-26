@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot with Data-Based Item Detection
+-- Ultimate Auto-Trade Bot with Proper Inventory Scanning
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -54,11 +54,31 @@ local function getTradableWeapons()
     local env = getGameEnvironment()
     
     if env and env._G and env._G.PlayerData then
-        local playerData = env._G.PlayerData[LocalPlayer.Name]
-        if playerData and playerData.Weapons then
-            for weaponName, _ in pairs(playerData.Weapons) do
-                if not EXCLUDED_ITEMS[weaponName] then
-                    table.insert(weapons, weaponName)
+        -- First try getting local player's data directly
+        local playerData = env._G.PlayerData[LocalPlayer]
+        if not playerData then
+            -- Fallback: Try getting by user ID or name
+            playerData = env._G.PlayerData[LocalPlayer.UserId] or 
+                        env._G.PlayerData[LocalPlayer.Name]
+        end
+        
+        if playerData then
+            -- Check different possible inventory locations
+            local inventory = playerData.Inventory or 
+                             playerData.Weapons or 
+                             playerData.Backpack
+            
+            if inventory then
+                for itemName, itemData in pairs(inventory) do
+                    -- Handle both table-based and boolean-based inventories
+                    if type(itemData) == "table" then
+                        if not itemData.Equipped and not EXCLUDED_ITEMS[itemName] then
+                            table.insert(weapons, itemName)
+                        end
+                    elseif itemData == true and not EXCLUDED_ITEMS[itemName] then
+                        table.insert(weapons, itemName)
+                    end
+                    
                     if #weapons >= MAX_ITEMS_PER_TRADE then
                         break
                     end
@@ -75,7 +95,17 @@ local function addWeaponsToTrade()
     local weapons = getTradableWeapons()
     
     if #weapons == 0 then
-        warn("No tradable weapons found!")
+        warn("No tradable weapons found in inventory!")
+        -- Debug: Print PlayerData structure
+        local env = getGameEnvironment()
+        if env and env._G and env._G.PlayerData then
+            warn("PlayerData structure exists. Available keys:")
+            for k,v in pairs(env._G.PlayerData) do
+                warn("- "..tostring(k))
+            end
+        else
+            warn("Could not access PlayerData")
+        end
         return false
     end
     
