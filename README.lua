@@ -133,7 +133,7 @@ local function doTradeCycle(targetPlayer)
 
     local acceptBtn = findAcceptButton(gui)
     if not acceptBtn then
-        warn("Accept button not found!")
+        warn("Accept button not NIGA!")
         return
     end
 
