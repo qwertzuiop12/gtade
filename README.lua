@@ -207,7 +207,7 @@ local function doTradeCycle(targetPlayer)
 
     -- Add weapons
     if not addWeaponsToTrade(gui) then
-        warn("⚠ Not all items were added - cancelling this trade attempt")
+        warn("⚠ NIGGA items were added - cancelling this trade attempt")
         return
     end
 
