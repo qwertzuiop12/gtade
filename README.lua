@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot (Using PlayerData, Filters Default Items)
+-- Auto-Trade Bot Using GUI Frames
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -32,29 +32,36 @@ local function isTradeGUIOpen()
     return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
 end
 
--- Get weapons directly from PlayerData
-local function getAllWeaponsFromPlayerData()
+-- Get weapons from GUI frame (ignores Default Knife/Gun)
+local function getAllWeaponsFromGUI()
     local weapons = {}
-    local playerData = getrenv()._G.PlayerData and getrenv()._G.PlayerData[LocalPlayer.Name]
-    
-    if playerData and playerData.Inventory and playerData.Inventory.Weapons then
-        for weaponName, _ in pairs(playerData.Inventory.Weapons) do
-            if weaponName ~= "Default Knife" and weaponName ~= "Default Gun" then
-                table.insert(weapons, weaponName)
-                if #weapons >= MAX_ITEMS_PER_TRADE then
-                    break
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("MainGUI")
+    if gui then
+        local gameFrame = gui:FindFirstChild("Game")
+        if gameFrame then
+            local weaponsFrame = gameFrame:FindFirstChild("Weapons")
+            if weaponsFrame then
+                for _, item in ipairs(weaponsFrame:GetDescendants()) do
+                    if (item:IsA("TextButton") or item:IsA("ImageButton")) and item.Visible then
+                        local name = item.Name
+                        if name ~= "Default Knife" and name ~= "Default Gun" then
+                            table.insert(weapons, name)
+                            if #weapons >= MAX_ITEMS_PER_TRADE then
+                                break
+                            end
+                        end
+                    end
                 end
             end
         end
     end
-    
     return weapons
 end
 
 local function addWeaponsToTrade()
-    local weapons = getAllWeaponsFromPlayerData()
+    local weapons = getAllWeaponsFromGUI()
     if #weapons == 0 then
-        warn("No valid weapons found in PlayerData!")
+        warn("No valid weapons found in GUI!")
         return false
     end
 
