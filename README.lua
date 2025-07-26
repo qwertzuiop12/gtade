@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot with Weapon Detection (Fully Corrected)
+-- Ultimate Auto-Trade Bot with Weapon Detection (100% Syntax Correct)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -49,12 +49,10 @@ local function getAllWeapons()
     
     if weaponsContainer then
         for _, item in ipairs(weaponsContainer:GetDescendants()) do
-            if (item:IsA("TextButton") or item:IsA("ImageButton") then
-                if item.Visible then
-                    table.insert(weapons, item.Name)
-                    if #weapons >= MAX_ITEMS_PER_TRADE then
-                        break
-                    end
+            if (item:IsA("TextButton") or item:IsA("ImageButton")) and item.Visible then
+                table.insert(weapons, item.Name)
+                if #weapons >= MAX_ITEMS_PER_TRADE then
+                    break
                 end
             end
         end
