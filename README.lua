@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot with Weapon Detection (100% Syntax Correct)
+-- Ultimate Auto-Trade Bot with Data-Based Item Detection
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -8,6 +8,18 @@ local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 5 -- Seconds between trades
 local ITEM_ADD_DELAY = 0.3 -- Delay between adding items
+
+-- Items to exclude
+local EXCLUDED_ITEMS = {
+    ["Default Knife"] = true,
+    ["Default Gun"] = true
+}
+
+-- Get the game's environment
+local function getGameEnvironment()
+    local success, env = pcall(getrenv)
+    return success and env or nil
+end
 
 -- Remotes
 local TradeRemotes = {
@@ -32,27 +44,24 @@ end
 
 -- Check if trade GUI is open
 local function isTradeGUIOpen()
-    return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
+    return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or 
+           LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
 end
 
--- Get ALL weapons from PlayerGui.MainGUI.Game.Weapons
-local function getAllWeapons()
+-- Get all tradable weapons from PlayerData
+local function getTradableWeapons()
     local weapons = {}
+    local env = getGameEnvironment()
     
-    local weaponsContainer = LocalPlayer.PlayerGui:FindFirstChild("MainGUI")
-    if weaponsContainer then
-        weaponsContainer = weaponsContainer:FindFirstChild("Game")
-        if weaponsContainer then
-            weaponsContainer = weaponsContainer:FindFirstChild("Weapons")
-        end
-    end
-    
-    if weaponsContainer then
-        for _, item in ipairs(weaponsContainer:GetDescendants()) do
-            if (item:IsA("TextButton") or item:IsA("ImageButton")) and item.Visible then
-                table.insert(weapons, item.Name)
-                if #weapons >= MAX_ITEMS_PER_TRADE then
-                    break
+    if env and env._G and env._G.PlayerData then
+        local playerData = env._G.PlayerData[LocalPlayer.Name]
+        if playerData and playerData.Weapons then
+            for weaponName, _ in pairs(playerData.Weapons) do
+                if not EXCLUDED_ITEMS[weaponName] then
+                    table.insert(weapons, weaponName)
+                    if #weapons >= MAX_ITEMS_PER_TRADE then
+                        break
+                    end
                 end
             end
         end
@@ -63,10 +72,10 @@ end
 
 -- Add weapons to trade
 local function addWeaponsToTrade()
-    local weapons = getAllWeapons()
+    local weapons = getTradableWeapons()
     
     if #weapons == 0 then
-        warn("No weapons found in the GUI!")
+        warn("No tradable weapons found!")
         return false
     end
     
@@ -85,7 +94,7 @@ local function acceptTrade()
         return false
     end
     
-    TradeRemotes.AcceptTrade:FireServer(285646582)
+    TradeRemotes.AcceptTrade:FireServer(285646582) -- Adjust ID if needed
     return true
 end
 
@@ -98,6 +107,7 @@ local function initiateTrade(targetPlayer)
     isTrading = true
     print("Starting trade with " .. targetPlayer.Name .. "...")
     
+    -- Send trade request
     local success, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
@@ -108,7 +118,7 @@ local function initiateTrade(targetPlayer)
         return
     end
     
-    wait(1)
+    wait(1) -- Wait for trade GUI
     
     if not isTradeGUIOpen() then
         warn("Trade GUI didn't open!")
@@ -116,11 +126,13 @@ local function initiateTrade(targetPlayer)
         return
     end
     
+    -- Add weapons
     if not addWeaponsToTrade() then
         isTrading = false
         return
     end
     
+    -- Accept trade
     if not acceptTrade() then
         warn("Failed to accept trade!")
     else
@@ -139,5 +151,5 @@ while true do
     else
         print(TARGET_PLAYER .. " not found. Waiting...")
     end
-    wait(5)
+    wait(5) -- Check every 5 seconds
 end
