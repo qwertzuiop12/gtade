@@ -71,15 +71,28 @@ local function getTop4Weapons()
     return picked
 end
 
--- === Check if UI element exists with text ===
-local function uiElementExistsWithText(parent, text)
-    for _, element in ipairs(parent:GetDescendants()) do
-        if element:IsA("TextLabel") or element:IsA("TextButton") then
-            if string.find(element.Text:lower(), text:lower()) then
-                return true
+-- === Check if UI element exists with exact text ===
+local function findItemFrame(gui, itemName)
+    -- First try to find the item in "Your Offer" section
+    local yourOffer = gui:FindFirstChild("YourOffer", true)
+    if yourOffer then
+        for _, frame in ipairs(yourOffer:GetDescendants()) do
+            if frame:IsA("Frame") and frame:FindFirstChildOfClass("TextLabel") then
+                local label = frame:FindFirstChildOfClass("TextLabel")
+                if string.find(string.lower(label.Text), string.lower(itemName)) then
+                    return true
+                end
             end
         end
     end
+    
+    -- If not found, try searching the entire GUI
+    for _, label in ipairs(gui:GetDescendants()) do
+        if label:IsA("TextLabel") and string.find(string.lower(label.Text), string.lower(itemName)) then
+            return true
+        end
+    end
+    
     return false
 end
 
@@ -90,8 +103,10 @@ local function waitForTradeGUI()
         local gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
         if gui then
             -- Check if "your offer" is visible
-            if uiElementExistsWithText(gui, "your offer") then
-                return gui
+            for _, label in ipairs(gui:GetDescendants()) do
+                if label:IsA("TextLabel") and string.find(string.lower(label.Text), "your offer") then
+                    return gui
+                end
             end
         end
         task.wait(0.2)
@@ -103,8 +118,10 @@ end
 local function waitForOtherAccept(gui)
     local startTime = os.clock()
     while os.clock() - startTime < ACCEPT_WAIT_TIMEOUT do
-        if uiElementExistsWithText(gui, "other player has accepted") then
-            return true
+        for _, label in ipairs(gui:GetDescendants()) do
+            if label:IsA("TextLabel") and string.find(string.lower(label.Text), "other player has accepted") then
+                return true
+            end
         end
         
         -- Also check if trade was completed (UI disappeared)
@@ -117,16 +134,6 @@ local function waitForOtherAccept(gui)
     return false
 end
 
--- === Check if all items are added ===
-local function areItemsAdded(gui, items)
-    for _, item in ipairs(items) do
-        if not uiElementExistsWithText(gui, item:lower()) then
-            return false
-        end
-    end
-    return true
-end
-
 -- === Add weapons to trade ===
 local function addWeaponsToTrade(gui)
     local weapons = getTop4Weapons()
@@ -135,24 +142,35 @@ local function addWeaponsToTrade(gui)
         return false
     end
 
-    print("✅ Adding weapons:")
+    print("✅ Attempting to add weapons:")
+    local addedCount = 0
+    
     for _, w in ipairs(weapons) do
         -- Check if item is already added
-        if not uiElementExistsWithText(gui, w:lower()) then
-            print("   →", w)
+        if not findItemFrame(gui, w) then
+            print("   → Adding", w)
             TradeRemotes.OfferItem:FireServer(w, "Weapons")
             task.wait(ITEM_ADD_DELAY)
+            
+            -- Verify it was added
+            if findItemFrame(gui, w) then
+                addedCount = addedCount + 1
+                print("   ✓ Successfully added", w)
+            else
+                print("   ✗ Failed to add", w)
+            end
         else
+            addedCount = addedCount + 1
             print("   →", w, "(already added)")
         end
     end
     
-    -- Verify all items were added
-    if areItemsAdded(gui, weapons) then
+    -- Final verification
+    if addedCount == #weapons then
         print("✅ All items successfully added")
         return true
     else
-        warn("⚠ Not all items were added!")
+        warn("⚠ Only added "..addedCount.."/"..#weapons.." items!")
         return false
     end
 end
@@ -189,6 +207,7 @@ local function doTradeCycle(targetPlayer)
 
     -- Add weapons
     if not addWeaponsToTrade(gui) then
+        warn("⚠ Not all items were added - cancelling this trade attempt")
         return
     end
 
