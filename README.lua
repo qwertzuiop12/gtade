@@ -1,25 +1,21 @@
--- Ultimate Auto-Trade Bot with Proper Inventory Scanning
+-- Frame-Based Auto-Trade Bot
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
 
 -- Config
 local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 5 -- Seconds between trades
-local ITEM_ADD_DELAY = 0.3 -- Delay between adding items
+local ITEM_ADD_DELAY = 0.5 -- Delay between adding items
+local SCROLL_DELAY = 0.5 -- Delay between scroll actions
 
 -- Items to exclude
 local EXCLUDED_ITEMS = {
     ["Default Knife"] = true,
     ["Default Gun"] = true
 }
-
--- Get the game's environment
-local function getGameEnvironment()
-    local success, env = pcall(getrenv)
-    return success and env or nil
-end
 
 -- Remotes
 local TradeRemotes = {
@@ -48,83 +44,112 @@ local function isTradeGUIOpen()
            LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
 end
 
--- Get all tradable weapons from PlayerData
-local function getTradableWeapons()
-    local weapons = {}
-    local env = getGameEnvironment()
+-- Simulate realistic mouse click
+local function simulateClick(button)
+    if not button or not button:IsA("GuiButton") then return false end
     
-    if env and env._G and env._G.PlayerData then
-        -- First try getting local player's data directly
-        local playerData = env._G.PlayerData[LocalPlayer]
-        if not playerData then
-            -- Fallback: Try getting by user ID or name
-            playerData = env._G.PlayerData[LocalPlayer.UserId] or 
-                        env._G.PlayerData[LocalPlayer.Name]
-        end
-        
-        if playerData then
-            -- Check different possible inventory locations
-            local inventory = playerData.Inventory or 
-                             playerData.Weapons or 
-                             playerData.Backpack
-            
-            if inventory then
-                for itemName, itemData in pairs(inventory) do
-                    -- Handle both table-based and boolean-based inventories
-                    if type(itemData) == "table" then
-                        if not itemData.Equipped and not EXCLUDED_ITEMS[itemName] then
-                            table.insert(weapons, itemName)
-                        end
-                    elseif itemData == true and not EXCLUDED_ITEMS[itemName] then
-                        table.insert(weapons, itemName)
-                    end
-                    
-                    if #weapons >= MAX_ITEMS_PER_TRADE then
-                        break
-                    end
+    local absPos = button.AbsolutePosition
+    local absSize = button.AbsoluteSize
+    local centerX = absPos.X + absSize.X/2
+    local centerY = absPos.Y + absSize.Y/2
+    
+    -- Human-like movement
+    for i = 1, 3 do
+        local offsetX = math.random(-10, 10)
+        local offsetY = math.random(-10, 10)
+        UserInputService:SendMouseMoveEvent(centerX + offsetX, centerY + offsetY)
+        wait(0.05)
+    end
+    
+    -- Final click
+    UserInputService:SendMouseButtonEvent(centerX, centerY, 0, true, nil, 50)
+    wait(0.1)
+    UserInputService:SendMouseButtonEvent(centerX, centerY, 0, false, nil, 1)
+    return true
+end
+
+-- Find all visible items in trade GUI
+local function findTradeItems()
+    local items = {}
+    local tradeGui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or 
+                     LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
+    
+    if not tradeGui then return items end
+    
+    -- Try common inventory frame locations
+    local inventoryFrames = {
+        tradeGui:FindFirstChild("ItemsFrame"),
+        tradeGui:FindFirstChild("Inventory"),
+        tradeGui:FindFirstChild("Weapons"),
+        tradeGui:FindFirstChild("Container"):FindFirstChild("Items")
+    }
+    
+    for _, frame in pairs(inventoryFrames) do
+        if frame then
+            for _, item in ipairs(frame:GetDescendants()) do
+                if (item:IsA("TextButton") or item:IsA("ImageButton")) and 
+                   item.Visible and item.Active and not EXCLUDED_ITEMS[item.Name] then
+                    table.insert(items, item)
                 end
             end
         end
     end
     
-    return weapons
+    return items
 end
 
--- Add weapons to trade
-local function addWeaponsToTrade()
-    local weapons = getTradableWeapons()
+-- Add items to trade
+local function addItemsToTrade()
+    -- Click "Add Items" button if exists
+    local addButton = findGuiElement("TradeGUI > Container > AddItemsButton") or
+                     findGuiElement("TradeGUI_Phone > Actions > AddItems")
+    if addButton then
+        simulateClick(addButton)
+        wait(1)
+    end
     
-    if #weapons == 0 then
-        warn("No tradable weapons found in inventory!")
-        -- Debug: Print PlayerData structure
-        local env = getGameEnvironment()
-        if env and env._G and env._G.PlayerData then
-            warn("PlayerData structure exists. Available keys:")
-            for k,v in pairs(env._G.PlayerData) do
-                warn("- "..tostring(k))
-            end
-        else
-            warn("Could not access PlayerData")
-        end
+    local items = findTradeItems()
+    if #items == 0 then
+        warn("No tradable items found in GUI!")
         return false
     end
     
-    for i = 1, math.min(#weapons, MAX_ITEMS_PER_TRADE) do
-        TradeRemotes.OfferItem:FireServer(weapons[i], "Weapons")
-        wait(ITEM_ADD_DELAY)
+    -- Add up to MAX_ITEMS_PER_TRADE
+    local added = 0
+    for _, item in ipairs(items) do
+        if added >= MAX_ITEMS_PER_TRADE then break end
+        
+        if simulateClick(item) then
+            added = added + 1
+            wait(ITEM_ADD_DELAY)
+        end
     end
     
-    return true
+    return added > 0
 end
 
 -- Accept trade
 local function acceptTrade()
-    if not isTradeGUIOpen() then
-        warn("Trade GUI not open!")
+    local acceptBtn = findGuiElement("TradeGUI > AcceptButton") or
+                     findGuiElement("TradeGUI_Phone > Actions > Accept")
+    
+    if not acceptBtn then
+        warn("Accept button not found!")
         return false
     end
     
-    TradeRemotes.AcceptTrade:FireServer(285646582) -- Adjust ID if needed
+    -- Wait for countdown if needed
+    local countdown = 0
+    while countdown < 5 do
+        local timerText = findTradeText("^[1-5]$") -- Looks for numbers 1-5
+        if timerText then
+            countdown = tonumber(timerText.Text) or 0
+        end
+        wait(0.1)
+    end
+    
+    simulateClick(acceptBtn)
+    wait(0.5)
     return true
 end
 
@@ -135,20 +160,11 @@ local function initiateTrade(targetPlayer)
     end
     
     isTrading = true
-    print("Starting trade with " .. targetPlayer.Name .. "...")
+    print("Starting trade with "..targetPlayer.Name)
     
     -- Send trade request
-    local success, err = pcall(function()
-        TradeRemotes.SendRequest:InvokeServer(targetPlayer)
-    end)
-    
-    if not success then
-        warn("Trade request failed: " .. err)
-        isTrading = false
-        return
-    end
-    
-    wait(1) -- Wait for trade GUI
+    TradeRemotes.SendRequest:InvokeServer(targetPlayer)
+    wait(1)
     
     if not isTradeGUIOpen() then
         warn("Trade GUI didn't open!")
@@ -156,8 +172,8 @@ local function initiateTrade(targetPlayer)
         return
     end
     
-    -- Add weapons
-    if not addWeaponsToTrade() then
+    -- Add items
+    if not addItemsToTrade() then
         isTrading = false
         return
     end
@@ -166,11 +182,35 @@ local function initiateTrade(targetPlayer)
     if not acceptTrade() then
         warn("Failed to accept trade!")
     else
-        print("Trade with " .. targetPlayer.Name .. " completed!")
+        print("Trade completed with "..targetPlayer.Name)
     end
     
     isTrading = false
     lastTradeTime = os.time()
+end
+
+-- Helper function to find GUI elements
+local function findGuiElement(path)
+    local current = LocalPlayer.PlayerGui
+    for part in path:gmatch("[^>]+") do
+        current = current:FindFirstChild(part:match("^%s*(.-)%s*$"))
+        if not current then return nil end
+    end
+    return current
+end
+
+-- Helper function to find text in trade GUI
+local function findTradeText(pattern)
+    local tradeGui = isTradeGUIOpen()
+    if not tradeGui then return nil end
+    
+    for _, descendant in ipairs(tradeGui:GetDescendants()) do
+        if (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) and
+           descendant.Text and descendant.Text:match(pattern) then
+            return descendant
+        end
+    end
+    return nil
 end
 
 -- Main loop
@@ -179,7 +219,7 @@ while true do
     if target then
         initiateTrade(target)
     else
-        print(TARGET_PLAYER .. " not found. Waiting...")
+        print(TARGET_PLAYER.." not found. Waiting...")
     end
-    wait(5) -- Check every 5 seconds
+    wait(5)
 end
