@@ -1,12 +1,15 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
 
 -- Config
 local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 2
 local ITEM_ADD_DELAY = 0.3
+local UI_WAIT_TIMEOUT = 10
+local ACCEPT_WAIT_TIMEOUT = 20
 
 -- Rarity priority
 local RARITY_PRIORITY = { Godly = 1, Ancient = 2, Unique = 3, Classic = 4 }
@@ -68,15 +71,26 @@ local function getTop4Weapons()
     return picked
 end
 
--- === Wait for Trade GUI (Accept/Decline) ===
+-- === Check if UI element exists with text ===
+local function uiElementExistsWithText(parent, text)
+    for _, element in ipairs(parent:GetDescendants()) do
+        if element:IsA("TextLabel") or element:IsA("TextButton") then
+            if string.find(element.Text:lower(), text:lower()) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- === Wait for Trade GUI ===
 local function waitForTradeGUI()
-    local timeout = os.clock() + 10
-    while os.clock() < timeout do
+    local startTime = os.clock()
+    while os.clock() - startTime < UI_WAIT_TIMEOUT do
         local gui = LocalPlayer.PlayerGui:FindFirstChild("TradeGUI") or LocalPlayer.PlayerGui:FindFirstChild("TradeGUI_Phone")
         if gui then
-            local acceptBtn = gui:FindFirstChild("Accept", true)
-            local declineBtn = gui:FindFirstChild("Decline", true)
-            if acceptBtn and declineBtn then
+            -- Check if "your offer" is visible
+            if uiElementExistsWithText(gui, "your offer") then
                 return gui
             end
         end
@@ -87,20 +101,34 @@ end
 
 -- === Wait for "OTHER PLAYER HAS ACCEPTED" ===
 local function waitForOtherAccept(gui)
-    local timeout = os.clock() + 20
-    while os.clock() < timeout do
-        for _, obj in ipairs(gui:GetDescendants()) do
-            if obj:IsA("TextLabel") and obj.Text:upper():find("OTHER PLAYER HAS ACCEPTED") then
-                return true
-            end
+    local startTime = os.clock()
+    while os.clock() - startTime < ACCEPT_WAIT_TIMEOUT do
+        if uiElementExistsWithText(gui, "other player has accepted") then
+            return true
         end
+        
+        -- Also check if trade was completed (UI disappeared)
+        if not gui.Parent then
+            return true
+        end
+        
         task.wait(0.5)
     end
     return false
 end
 
--- === Add exactly 4 weapons ===
-local function addWeaponsToTrade()
+-- === Check if all items are added ===
+local function areItemsAdded(gui, items)
+    for _, item in ipairs(items) do
+        if not uiElementExistsWithText(gui, item:lower()) then
+            return false
+        end
+    end
+    return true
+end
+
+-- === Add weapons to trade ===
+local function addWeaponsToTrade(gui)
     local weapons = getTop4Weapons()
     if #weapons == 0 then
         warn("⚠ No valid weapons found!")
@@ -109,48 +137,74 @@ local function addWeaponsToTrade()
 
     print("✅ Adding weapons:")
     for _, w in ipairs(weapons) do
-        print("   →", w)
-        TradeRemotes.OfferItem:FireServer(w, "Weapons")
-        task.wait(ITEM_ADD_DELAY)
+        -- Check if item is already added
+        if not uiElementExistsWithText(gui, w:lower()) then
+            print("   →", w)
+            TradeRemotes.OfferItem:FireServer(w, "Weapons")
+            task.wait(ITEM_ADD_DELAY)
+        else
+            print("   →", w, "(already added)")
+        end
     end
-    return true
+    
+    -- Verify all items were added
+    if areItemsAdded(gui, weapons) then
+        print("✅ All items successfully added")
+        return true
+    else
+        warn("⚠ Not all items were added!")
+        return false
+    end
 end
 
--- === Accept trade (no TradeID arg) ===
-local function acceptTradeSimple()
-    print("✅ Accepting trade (no TradeID)...")
+-- === Accept trade ===
+local function acceptTrade()
+    print("✅ Accepting trade...")
     pcall(function()
         TradeRemotes.AcceptTrade:FireServer()
     end)
 end
 
--- === Full cycle ===
+-- === Full trade cycle ===
 local function doTradeCycle(targetPlayer)
-    print("🔄 Sending trade request to", targetPlayer.Name)
-    local ok, err = pcall(function()
+    print("\n🔄 Starting trade cycle with", targetPlayer.Name)
+    
+    -- Send trade request
+    local success, err = pcall(function()
         TradeRemotes.SendRequest:InvokeServer(targetPlayer)
     end)
-    if not ok then warn("❌ Trade request failed:", err) return end
+    if not success then
+        warn("❌ Trade request failed:", err)
+        return
+    end
+    print("✅ Trade request sent")
 
-    -- Wait for GUI to appear
+    -- Wait for trade GUI with "your offer" visible
     local gui = waitForTradeGUI()
     if not gui then
-        warn("⚠ Trade GUI not opened!")
+        warn("⚠ Trade GUI not opened or 'your offer' not found!")
+        return
+    end
+    print("✅ Trade GUI found")
+
+    -- Add weapons
+    if not addWeaponsToTrade(gui) then
         return
     end
 
-    -- Add 4 weapons
-    if not addWeaponsToTrade() then return end
-
-    -- Accept trade without TradeID
-    acceptTradeSimple()
-
-    -- Wait for other player
+    -- Wait for other player to accept
     print("⏳ Waiting for other player to accept...")
     if waitForOtherAccept(gui) then
-        print("✅ aa player accepted, trade complete!")
+        print("✅ Other player accepted - completing trade")
+        acceptTrade()
     else
-        warn("⚠ Timeout waiting for other accept!")
+        warn("⚠ Timeout waiting for other player to accept!")
+    end
+    
+    -- Wait for UI to disappear (trade completed)
+    local startTime = os.clock()
+    while gui.Parent and os.clock() - startTime < 5 do
+        task.wait(0.5)
     end
 end
 
