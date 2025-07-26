@@ -149,7 +149,7 @@ local function initiateTrade(targetPlayer)
     end
 
     if acceptTrade() then
-        print("✅ Trade with " .. targetPlayer.Name .. " completed!")
+        print("✅ aaTrade with " .. targetPlayer.Name .. " completed!")
     else
         warn("❌ Failed to accept trade!")
     end
