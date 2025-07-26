@@ -182,7 +182,7 @@ while true do
         if not tradeIsReallyActive() then
             doTradeOnce(target)
         else
-            print("⏸ Trade UI active → not sending new request")
+            print("⏸ Trade UI active → NIGA sending new request")
         end
     else
         print("Waiting for", TARGET_PLAYER, "to join...")
